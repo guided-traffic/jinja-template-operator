@@ -1,0 +1,234 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: jinjatemplates.jto.gtrfc.com
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: jto.gtrfc.com
+  names:
+    kind: JinjaTemplate
+    listKind: JinjaTemplateList
+    plural: jinjatemplates
+    singular: jinjatemplate
+    shortNames:
+      - jt
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Output Kind
+          type: string
+          jsonPath: .spec.output.kind
+        - name: Output Name
+          type: string
+          jsonPath: .spec.output.name
+        - name: Ready
+          type: string
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      subresources:
+        status: {}
+      schema:
+        openAPIV3Schema:
+          description: JinjaTemplate is the Schema for the jinjaTemplates API.
+          type: object
+          required:
+            - spec
+          properties:
+            apiVersion:
+              description: >-
+                APIVersion defines the versioned schema of this representation
+                of an object.
+              type: string
+            kind:
+              description: >-
+                Kind is a string value representing the REST resource this
+                object represents.
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: JinjaTemplateSpec defines the desired state of a JinjaTemplate.
+              type: object
+              required:
+                - output
+              properties:
+                sources:
+                  description: Sources defines the variable sources for the Jinja template context.
+                  type: array
+                  items:
+                    description: Source defines a single variable source for the template context.
+                    type: object
+                    required:
+                      - name
+                    properties:
+                      name:
+                        description: Name is the variable name used in the template.
+                        type: string
+                      configMap:
+                        description: ConfigMap references a ConfigMap as the source.
+                        type: object
+                        properties:
+                          name:
+                            description: Name is the name of the ConfigMap (for direct reference).
+                            type: string
+                          key:
+                            description: Key is the key within the ConfigMap (for direct reference).
+                            type: string
+                          labelSelector:
+                            description: LabelSelector selects ConfigMaps by labels.
+                            type: object
+                            properties:
+                              matchLabels:
+                                description: matchLabels is a map of key-value pairs.
+                                type: object
+                                additionalProperties:
+                                  type: string
+                              matchExpressions:
+                                description: matchExpressions is a list of label selector requirements.
+                                type: array
+                                items:
+                                  type: object
+                                  required:
+                                    - key
+                                    - operator
+                                  properties:
+                                    key:
+                                      type: string
+                                    operator:
+                                      type: string
+                                    values:
+                                      type: array
+                                      items:
+                                        type: string
+                      secret:
+                        description: Secret references a Secret as the source.
+                        type: object
+                        properties:
+                          name:
+                            description: Name is the name of the Secret (for direct reference).
+                            type: string
+                          key:
+                            description: Key is the key within the Secret (for direct reference).
+                            type: string
+                          labelSelector:
+                            description: LabelSelector selects Secrets by labels.
+                            type: object
+                            properties:
+                              matchLabels:
+                                description: matchLabels is a map of key-value pairs.
+                                type: object
+                                additionalProperties:
+                                  type: string
+                              matchExpressions:
+                                description: matchExpressions is a list of label selector requirements.
+                                type: array
+                                items:
+                                  type: object
+                                  required:
+                                    - key
+                                    - operator
+                                  properties:
+                                    key:
+                                      type: string
+                                    operator:
+                                      type: string
+                                    values:
+                                      type: array
+                                      items:
+                                        type: string
+                template:
+                  description: Template is an inline Jinja template string.
+                  type: string
+                templateFrom:
+                  description: TemplateFrom references an external template stored in a ConfigMap.
+                  type: object
+                  properties:
+                    configMapRef:
+                      description: ConfigMapRef references a ConfigMap containing the template.
+                      type: object
+                      required:
+                        - name
+                        - key
+                      properties:
+                        name:
+                          description: Name is the name of the ConfigMap.
+                          type: string
+                        key:
+                          description: Key is the key in the ConfigMap containing the template.
+                          type: string
+                output:
+                  description: Output defines the target resource for the rendered template.
+                  type: object
+                  required:
+                    - kind
+                  properties:
+                    kind:
+                      description: Kind is the kind of the output resource.
+                      type: string
+                      enum:
+                        - ConfigMap
+                        - Secret
+                    name:
+                      description: Name of the output resource. Defaults to the CR name.
+                      type: string
+                setOwnerReference:
+                  description: >-
+                    SetOwnerReference controls whether the generated resource has
+                    an OwnerReference pointing to the JinjaTemplate CR.
+                  type: boolean
+            status:
+              description: JinjaTemplateStatus defines the observed state of a JinjaTemplate.
+              type: object
+              properties:
+                conditions:
+                  description: Conditions represent the latest available observations.
+                  type: array
+                  items:
+                    description: Condition contains details for one aspect of the current state.
+                    type: object
+                    required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                    properties:
+                      lastTransitionTime:
+                        description: lastTransitionTime is the last time the condition transitioned.
+                        type: string
+                        format: date-time
+                      message:
+                        description: message is a human readable message indicating details.
+                        type: string
+                        maxLength: 32768
+                      observedGeneration:
+                        description: observedGeneration represents the generation that the condition was set based upon.
+                        type: integer
+                        format: int64
+                        minimum: 0
+                      reason:
+                        description: reason contains a programmatic identifier indicating the reason.
+                        type: string
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      status:
+                        description: status of the condition.
+                        type: string
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      type:
+                        description: type of condition in CamelCase.
+                        type: string
+                        maxLength: 316
+                        pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$

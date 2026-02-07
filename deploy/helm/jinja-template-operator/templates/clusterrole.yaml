@@ -1,0 +1,83 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-manager-role
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+rules:
+  # JinjaTemplate CR management
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates/finalizers
+    verbs:
+      - update
+  # ConfigMap management (read sources + create/update outputs)
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Secret management (read sources + create/update outputs)
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Event recording
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  {{- if .Values.leaderElection.enabled }}
+  # Leader election
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  {{- end }}

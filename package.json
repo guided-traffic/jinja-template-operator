@@ -1,0 +1,20 @@
+{
+  "name": "jinja-template-operator",
+  "version": "0.0.0-development",
+  "description": "A Kubernetes operator that generates ConfigMaps and Secrets using Jinja-like templates",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/guided-traffic/jinja-template-operator.git"
+  },
+  "author": "Guided Traffic",
+  "license": "Apache-2.0",
+  "private": true,
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "13.0.1",
+    "@semantic-release/git": "10.0.1",
+    "@semantic-release/github": "12.0.3",
+    "@semantic-release/release-notes-generator": "14.1.0",
+    "conventional-changelog-conventionalcommits": "9.1.0",
+    "semantic-release": "25.0.3"
+  }
+}
