@@ -1,0 +1,19 @@
+apiVersion: v2
+name: jinja-template-operator
+description: A Kubernetes operator that generates ConfigMaps and Secrets using Jinja-like templates
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/guided-traffic/jinja-template-operator
+sources:
+  - https://github.com/guided-traffic/jinja-template-operator
+maintainers:
+  - name: Guided Traffic
+    url: https://github.com/guided-traffic
+keywords:
+  - kubernetes
+  - operator
+  - jinja
+  - template
+  - configmap
+  - secret

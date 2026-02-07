@@ -1,0 +1,66 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jinja-template-operator-manager-role
+rules:
+  # JinjaTemplate CR management
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjaTemplates
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjaTemplates/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjaTemplates/finalizers
+    verbs:
+      - update
+  # ConfigMap management (read sources + create/update outputs)
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Secret management (read sources + create/update outputs)
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  # Event recording
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch

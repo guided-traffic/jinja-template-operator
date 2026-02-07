@@ -1,0 +1,23 @@
+# E2E test Helm values — uses local image with debug logging
+image:
+  repository: guidedtraffic/jinja-template-operator
+  pullPolicy: Never
+  tag: latest
+
+operator:
+  defaultOwnerReference: true
+
+replicaCount: 1
+
+leaderElection:
+  enabled: false
+
+logLevel: debug
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi

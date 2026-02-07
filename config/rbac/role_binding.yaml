@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jinja-template-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jinja-template-operator-manager-role
+subjects:
+  - kind: ServiceAccount
+    name: jinja-template-operator-controller-manager
+    namespace: system
