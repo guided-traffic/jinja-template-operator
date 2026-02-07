@@ -341,3 +341,305 @@ func TestResolveDirectConfigMapMissingNameOrKey(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 }
+
+func TestResolveDirectSecretMissingNameOrKey(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+
+	// Missing key
+	srcs := []jtov1.Source{
+		{
+			Name: "no_key",
+			Secret: &jtov1.SecretSource{
+				Name: "my-secret",
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "requires both name and key")
+
+	// Missing name
+	srcs = []jtov1.Source{
+		{
+			Name: "no_name",
+			Secret: &jtov1.SecretSource{
+				Key: "password",
+			},
+		},
+	}
+
+	_, err = resolver.Resolve(context.Background(), "default", srcs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "requires both name and key")
+}
+
+func TestResolveDirectSecretMissingKey(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"existing_key": []byte("value"),
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithObjects(secret).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "missing_key",
+			Secret: &jtov1.SecretSource{
+				Name: "my-secret",
+				Key:  "nonexistent_key",
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key \"nonexistent_key\" not found")
+}
+
+func TestResolveMissingSecret(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "missing",
+			Secret: &jtov1.SecretSource{
+				Name: "nonexistent",
+				Key:  "key",
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to resolve source")
+	assert.Contains(t, err.Error(), "failed to get Secret")
+}
+
+func TestResolveConfigMapByLabelSelectorEmpty(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "empty_result",
+			ConfigMap: &jtov1.ConfigMapSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"type": "nonexistent",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	require.NoError(t, err)
+
+	endpoints, ok := result["empty_result"].([]map[string]interface{})
+	require.True(t, ok)
+	assert.Empty(t, endpoints)
+}
+
+func TestResolveSecretByLabelSelectorEmpty(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "empty_secrets",
+			Secret: &jtov1.SecretSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"type": "nonexistent",
+					},
+				},
+			},
+		},
+	}
+
+	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	require.NoError(t, err)
+
+	secrets, ok := result["empty_secrets"].([]map[string]interface{})
+	require.True(t, ok)
+	assert.Empty(t, secrets)
+}
+
+func TestResolveSecretByLabelSelectorMultiple(t *testing.T) {
+	s1 := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cred-a",
+			Namespace: "default",
+			Labels:    map[string]string{"type": "credential"},
+		},
+		Data: map[string][]byte{
+			"token": []byte("token-a"),
+		},
+	}
+	s2 := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cred-b",
+			Namespace: "default",
+			Labels:    map[string]string{"type": "credential"},
+		},
+		Data: map[string][]byte{
+			"token": []byte("token-b"),
+		},
+	}
+
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		WithObjects(s1, s2).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "creds",
+			Secret: &jtov1.SecretSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"type": "credential"},
+				},
+			},
+		},
+	}
+
+	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	require.NoError(t, err)
+
+	creds, ok := result["creds"].([]map[string]interface{})
+	require.True(t, ok)
+	assert.Len(t, creds, 2)
+
+	names := map[string]bool{}
+	for _, c := range creds {
+		names[c["name"].(string)] = true
+	}
+	assert.True(t, names["cred-a"])
+	assert.True(t, names["cred-b"])
+}
+
+func TestResolveEmptySources(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+
+	result, err := resolver.Resolve(context.Background(), "default", nil)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Empty(t, result)
+}
+
+func TestGetReferencedResources(t *testing.T) {
+	srcs := []jtov1.Source{
+		{
+			Name: "direct_cm",
+			ConfigMap: &jtov1.ConfigMapSource{
+				Name: "my-config",
+				Key:  "host",
+			},
+		},
+		{
+			Name: "direct_secret",
+			Secret: &jtov1.SecretSource{
+				Name: "my-secret",
+				Key:  "password",
+			},
+		},
+		{
+			Name: "label_cm",
+			ConfigMap: &jtov1.ConfigMapSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"type": "endpoint"},
+				},
+			},
+		},
+		{
+			Name: "label_secret",
+			Secret: &jtov1.SecretSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"type": "credential"},
+				},
+			},
+		},
+	}
+
+	cmNames, secretNames, cmSelectors, secretSelectors := GetReferencedResources(srcs)
+
+	assert.Equal(t, []string{"my-config"}, cmNames)
+	assert.Equal(t, []string{"my-secret"}, secretNames)
+	require.Len(t, cmSelectors, 1)
+	require.Len(t, secretSelectors, 1)
+}
+
+func TestGetReferencedResourcesEmpty(t *testing.T) {
+	cmNames, secretNames, cmSelectors, secretSelectors := GetReferencedResources(nil)
+
+	assert.Empty(t, cmNames)
+	assert.Empty(t, secretNames)
+	assert.Empty(t, cmSelectors)
+	assert.Empty(t, secretSelectors)
+}
+
+func TestGetReferencedResourcesDirectOnly(t *testing.T) {
+	srcs := []jtov1.Source{
+		{
+			Name:      "cm1",
+			ConfigMap: &jtov1.ConfigMapSource{Name: "config-a", Key: "k"},
+		},
+		{
+			Name:      "cm2",
+			ConfigMap: &jtov1.ConfigMapSource{Name: "config-b", Key: "k"},
+		},
+	}
+
+	cmNames, secretNames, cmSelectors, secretSelectors := GetReferencedResources(srcs)
+
+	assert.Equal(t, []string{"config-a", "config-b"}, cmNames)
+	assert.Empty(t, secretNames)
+	assert.Empty(t, cmSelectors)
+	assert.Empty(t, secretSelectors)
+}
+
+func TestResolveDirectConfigMapMissingName(t *testing.T) {
+	client := fake.NewClientBuilder().
+		WithScheme(newScheme()).
+		Build()
+
+	resolver := NewResolver(client)
+	srcs := []jtov1.Source{
+		{
+			Name: "no_name",
+			ConfigMap: &jtov1.ConfigMapSource{
+				Key: "some-key",
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "requires both name and key")
+}

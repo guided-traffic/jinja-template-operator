@@ -168,3 +168,80 @@ func TestValidateInvalidTemplate(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "template syntax error")
 }
+
+func TestRenderNilContext(t *testing.T) {
+	renderer := NewRenderer()
+
+	result, err := renderer.Render("Static text", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Static text", result)
+}
+
+func TestNewRenderer(t *testing.T) {
+	renderer := NewRenderer()
+	assert.NotNil(t, renderer)
+}
+
+func TestRenderNestedObjects(t *testing.T) {
+	renderer := NewRenderer()
+
+	template := `{{ config.database.host }}:{{ config.database.port }}`
+	context := map[string]interface{}{
+		"config": map[string]interface{}{
+			"database": map[string]interface{}{
+				"host": "localhost",
+				"port": "5432",
+			},
+		},
+	}
+
+	result, err := renderer.Render(template, context)
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:5432", result)
+}
+
+func TestRenderDefaultFilter(t *testing.T) {
+	renderer := NewRenderer()
+
+	result, err := renderer.Render("{{ missing|default('fallback') }}", map[string]interface{}{})
+	require.NoError(t, err)
+	assert.Equal(t, "fallback", result)
+}
+
+func TestValidateComplexTemplate(t *testing.T) {
+	renderer := NewRenderer()
+
+	template := `{% for item in items %}
+{% if item.enabled %}
+{{ item.name }}={{ item.value }}
+{% endif %}
+{% endfor %}`
+
+	err := renderer.Validate(template)
+	assert.NoError(t, err)
+}
+
+func TestRenderLowerFilter(t *testing.T) {
+	renderer := NewRenderer()
+
+	result, err := renderer.Render("{{ name|lower }}", map[string]interface{}{
+		"name": "HELLO",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "hello", result)
+}
+
+func TestRenderEmptyTemplate(t *testing.T) {
+	renderer := NewRenderer()
+
+	result, err := renderer.Render("", map[string]interface{}{})
+	require.NoError(t, err)
+	assert.Equal(t, "", result)
+}
+
+func TestValidateEmptyTemplate(t *testing.T) {
+	renderer := NewRenderer()
+
+	err := renderer.Validate("")
+	assert.NoError(t, err)
+}
