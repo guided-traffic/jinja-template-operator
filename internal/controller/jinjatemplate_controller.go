@@ -357,6 +357,17 @@ func (r *JinjaTemplateReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// SetupWithManagerAndName sets up the controller with the Manager using a custom controller name.
+// This is useful for integration tests where multiple controllers may run in the same process.
+func (r *JinjaTemplateReconciler) SetupWithManagerAndName(mgr ctrl.Manager, name string) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		Named(name).
+		For(&jtov1.JinjaTemplate{}).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.findJinjaTemplatesForConfigMap)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.findJinjaTemplatesForSecret)).
+		Complete(r)
+}
+
 // findJinjaTemplatesForConfigMap maps ConfigMap events to JinjaTemplate reconcile requests.
 func (r *JinjaTemplateReconciler) findJinjaTemplatesForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
 	return r.findJinjaTemplatesForObject(ctx, obj, "ConfigMap")

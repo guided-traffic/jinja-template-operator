@@ -196,70 +196,70 @@ test/
 ## Implementation Plan
 
 ### Phase 1: Project Foundation
-- [ ] Initialize Go module with correct path (`github.com/guided-traffic/jinja-template-operator`)
-- [ ] Set up directory structure (`cmd/`, `api/`, `internal/`, `config/`, `test/`)
-- [ ] Create `cmd/main.go` with operator manager bootstrap (controller-runtime)
-- [ ] Add Gonja dependency to `go.mod`
+- [x] Initialize Go module with correct path (`github.com/guided-traffic/jinja-template-operator`)
+- [x] Set up directory structure (`cmd/`, `api/`, `internal/`, `config/`, `test/`)
+- [x] Create `cmd/main.go` with operator manager bootstrap (controller-runtime)
+- [x] Add Gonja dependency to `go.mod`
 
 ### Phase 2: CRD & API Types
-- [ ] Define `JinjaTemplate` types in `api/v1/jinjatemplate_types.go` (Spec, Status, Source, Output)
-- [ ] Create `api/v1/groupversion_info.go` for API group registration
-- [ ] Generate deep copy methods (`zz_generated.deepcopy.go`)
-- [ ] Generate CRD YAML manifests
-- [ ] Write unit tests for type validation
+- [x] Define `JinjaTemplate` types in `api/v1/jinjatemplate_types.go` (Spec, Status, Source, Output)
+- [x] Create `api/v1/groupversion_info.go` for API group registration
+- [x] Generate deep copy methods (`zz_generated.deepcopy.go`)
+- [x] Generate CRD YAML manifests
+- [x] Write unit tests for type validation
 
 ### Phase 3: Source Resolver
-- [ ] Implement direct ConfigMap reference resolver (name + key → string)
-- [ ] Implement direct Secret reference resolver (name + key → string)
-- [ ] Implement label selector ConfigMap resolver (labelSelector → list of objects)
-- [ ] Implement label selector Secret resolver (labelSelector → list of objects)
-- [ ] Build context map from resolved sources (name → value/list)
-- [ ] Write unit tests for all resolver paths
-- [ ] Handle error cases: missing source, missing key, permission denied
+- [x] Implement direct ConfigMap reference resolver (name + key → string)
+- [x] Implement direct Secret reference resolver (name + key → string)
+- [x] Implement label selector ConfigMap resolver (labelSelector → list of objects)
+- [x] Implement label selector Secret resolver (labelSelector → list of objects)
+- [x] Build context map from resolved sources (name → value/list)
+- [x] Write unit tests for all resolver paths
+- [x] Handle error cases: missing source, missing key, permission denied
 
 ### Phase 4: Template Renderer
-- [ ] Implement inline template rendering via Gonja
-- [ ] Implement external template loading from ConfigMap reference
-- [ ] Validate template before rendering (syntax check)
-- [ ] Write unit tests for rendering (variables, loops, filters, error cases)
+- [x] Implement inline template rendering via Gonja
+- [x] Implement external template loading from ConfigMap reference
+- [x] Validate template before rendering (syntax check)
+- [x] Write unit tests for rendering (variables, loops, filters, error cases)
 
 ### Phase 5: Reconciler (Controller)
-- [ ] Implement `JinjaTemplateReconciler` with `Reconcile()` method
-- [ ] Wire source resolution → template rendering → output creation/update
-- [ ] Implement ConfigMap output creation with proper labels/annotations
-- [ ] Implement Secret output creation with proper labels/annotations
-- [ ] Implement OwnerReference logic (CR field → global default fallback)
-- [ ] Set Status conditions (`Ready=True/False`) with messages
-- [ ] Emit Kubernetes Events on success and failure
-- [ ] Implement output name defaulting (CR name if `output.name` is omitted)
-- [ ] Write unit tests for reconciler logic
+- [x] Implement `JinjaTemplateReconciler` with `Reconcile()` method
+- [x] Wire source resolution → template rendering → output creation/update
+- [x] Implement ConfigMap output creation with proper labels/annotations
+- [x] Implement Secret output creation with proper labels/annotations
+- [x] Implement OwnerReference logic (CR field → global default fallback)
+- [x] Set Status conditions (`Ready=True/False`) with messages
+- [x] Emit Kubernetes Events on success and failure
+- [x] Implement output name defaulting (CR name if `output.name` is omitted)
+- [x] Write unit tests for reconciler logic
 
 ### Phase 6: Watch & Trigger Setup
-- [ ] Set up watch on `JinjaTemplate` CRs
-- [ ] Set up watch on ConfigMaps with mapping to owning JinjaTemplates
-- [ ] Set up watch on Secrets with mapping to owning JinjaTemplates
-- [ ] Ensure label selector matches trigger reconciliation for new/deleted resources
+- [x] Set up watch on `JinjaTemplate` CRs
+- [x] Set up watch on ConfigMaps with mapping to owning JinjaTemplates
+- [x] Set up watch on Secrets with mapping to owning JinjaTemplates
+- [x] Ensure label selector matches trigger reconciliation for new/deleted resources
 - [ ] Write integration tests (envtest) for watch behavior
 
 ### Phase 7: Operator Configuration
-- [ ] Implement global config struct (defaultOwnerReference, etc.)
-- [ ] Pass global config via CLI flags / environment variables from Helm
-- [ ] Wire config into reconciler
+- [x] Implement global config struct (defaultOwnerReference, etc.)
+- [x] Pass global config via CLI flags / environment variables from Helm
+- [x] Wire config into reconciler
 
 ### Phase 8: RBAC & Manifests
-- [ ] Define ClusterRole with permissions for ConfigMaps, Secrets, JinjaTemplates, Events
-- [ ] Create ClusterRoleBinding
-- [ ] Create ServiceAccount
-- [ ] Create Manager Deployment manifest
+- [x] Define ClusterRole with permissions for ConfigMaps, Secrets, JinjaTemplates, Events
+- [x] Create ClusterRoleBinding
+- [x] Create ServiceAccount
+- [x] Create Manager Deployment manifest
 
 ### Phase 9: Helm Chart
-- [ ] Create `Chart.yaml` with metadata
-- [ ] Create `values.yaml` with all configurable values
-- [ ] Create `_helpers.tpl` with common template helpers
-- [ ] Create `templates/crd.yaml` for the JinjaTemplate CRD
-- [ ] Create `templates/deployment.yaml` for the operator
-- [ ] Create `templates/serviceaccount.yaml`
-- [ ] Create `templates/clusterrole.yaml` and `templates/clusterrolebinding.yaml`
+- [x] Create `Chart.yaml` with metadata
+- [x] Create `values.yaml` with all configurable values
+- [x] Create `_helpers.tpl` with common template helpers
+- [x] Create `templates/crd.yaml` for the JinjaTemplate CRD
+- [x] Create `templates/deployment.yaml` for the operator
+- [x] Create `templates/serviceaccount.yaml`
+- [x] Create `templates/clusterrole.yaml` and `templates/clusterrolebinding.yaml`
 - [ ] Validate chart with `helm lint` and `helm template`
 
 ### Phase 10: Integration & E2E Tests
@@ -267,7 +267,7 @@ test/
 - [ ] Write integration tests for source change → re-render
 - [ ] Write integration tests for label selector dynamic matching
 - [ ] Write integration tests for error handling (missing source, bad template)
-- [ ] Create E2E test helm-values.yaml
+- [x] Create E2E test helm-values.yaml
 - [ ] Write E2E tests against Kind cluster
 - [ ] Verify CI pipeline runs successfully
 
