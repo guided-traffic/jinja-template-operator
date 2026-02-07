@@ -405,7 +405,7 @@ func (r *JinjaTemplateReconciler) findJinjaTemplatesForObject(ctx context.Contex
 
 	var requests []reconcile.Request
 	for _, jt := range jtList.Items {
-		if r.objectReferencedByJinjaTemplate(&jt, obj, kind) {
+		if r.objectReferencedByJinjaTemplate(&jt, obj, kind) || r.objectIsOutputOfJinjaTemplate(&jt, obj, kind) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      jt.Name,
@@ -424,6 +424,19 @@ func (r *JinjaTemplateReconciler) findJinjaTemplatesForObject(ctx context.Contex
 	}
 
 	return requests
+}
+
+// objectIsOutputOfJinjaTemplate checks if the given object is the output target of the JinjaTemplate.
+// This enables the operator to re-reconcile (and restore) the output when it is deleted or modified externally.
+func (r *JinjaTemplateReconciler) objectIsOutputOfJinjaTemplate(jt *jtov1.JinjaTemplate, obj client.Object, kind string) bool {
+	if jt.Spec.Output.Kind != kind {
+		return false
+	}
+	outputName := jt.Spec.Output.Name
+	if outputName == "" {
+		outputName = jt.Name
+	}
+	return obj.GetName() == outputName
 }
 
 // objectReferencedByJinjaTemplate checks if the given object is referenced by the JinjaTemplate.
