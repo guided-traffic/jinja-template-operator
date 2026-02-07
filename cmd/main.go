@@ -79,7 +79,7 @@ func main() {
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
 		Config:   operatorConfig,
-		Recorder: mgr.GetEventRecorderFor("jinjatemplate-controller"),
+		Recorder: mgr.GetEventRecorder("jinjatemplate-controller"),
 		Renderer: tmpl.NewRenderer(),
 		Resolver: sources.NewResolver(mgr.GetClient()),
 	}

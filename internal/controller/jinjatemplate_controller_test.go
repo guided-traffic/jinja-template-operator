@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -27,7 +27,7 @@ func newTestScheme() *runtime.Scheme {
 	return s
 }
 
-func newTestReconciler(objs ...runtime.Object) (*JinjaTemplateReconciler, *record.FakeRecorder) {
+func newTestReconciler(objs ...runtime.Object) (*JinjaTemplateReconciler, *events.FakeRecorder) {
 	scheme := newTestScheme()
 	clientObjs := make([]runtime.Object, len(objs))
 	copy(clientObjs, objs)
@@ -46,7 +46,7 @@ func newTestReconciler(objs ...runtime.Object) (*JinjaTemplateReconciler, *recor
 		WithStatusSubresource(&jtov1.JinjaTemplate{}).
 		Build()
 
-	recorder := record.NewFakeRecorder(10)
+	recorder := events.NewFakeRecorder(10)
 
 	reconciler := &JinjaTemplateReconciler{
 		Client:   c,
@@ -106,7 +106,7 @@ func TestReconcileSimpleInlineTemplate(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.False(t, result.Requeue)
+	assert.Equal(t, ctrl.Result{}, result)
 
 	// Verify output ConfigMap was created
 	outputCM := &corev1.ConfigMap{}
@@ -166,7 +166,7 @@ func TestReconcileSecretOutput(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.False(t, result.Requeue)
+	assert.Equal(t, ctrl.Result{}, result)
 
 	// Verify output Secret was created
 	outputSecret := &corev1.Secret{}
@@ -189,7 +189,7 @@ func TestReconcileNotFound(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.False(t, result.Requeue)
+	assert.Equal(t, ctrl.Result{}, result)
 }
 
 func TestReconcileInvalidSpec(t *testing.T) {
@@ -216,7 +216,7 @@ func TestReconcileInvalidSpec(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.False(t, result.Requeue)
+	assert.Equal(t, ctrl.Result{}, result)
 
 	// Check that an event was recorded
 	select {

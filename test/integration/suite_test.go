@@ -143,7 +143,7 @@ func setupTestManager(t *testing.T, operatorConfig *config.OperatorConfig) *test
 		Client:   mgrClient,
 		Scheme:   mgr.GetScheme(),
 		Config:   operatorConfig,
-		Recorder: mgr.GetEventRecorderFor("jinjatemplate-controller"),
+		Recorder: mgr.GetEventRecorder("jinjatemplate-controller"),
 		Renderer: tmpl.NewRenderer(),
 		Resolver: sources.NewResolver(mgrClient),
 	}

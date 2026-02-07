@@ -13,7 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -59,6 +59,12 @@ const (
 
 	// ManagerName is the name used for managed-by labels and event recording.
 	ManagerName = "jinja-template-operator"
+
+	// OutputKindConfigMap is the output kind for ConfigMap resources.
+	OutputKindConfigMap = "ConfigMap"
+
+	// OutputKindSecret is the output kind for Secret resources.
+	OutputKindSecret = "Secret"
 )
 
 // JinjaTemplateReconciler reconciles JinjaTemplate objects.
@@ -66,7 +72,7 @@ type JinjaTemplateReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Config   *config.OperatorConfig
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 	Renderer *tmpl.Renderer
 	Resolver *sources.Resolver
 }
@@ -86,28 +92,28 @@ func (r *JinjaTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Reconcile and always update status at the end
-	result, reconcileErr := r.reconcile(ctx, log, jt)
+	reconcileErr := r.reconcile(ctx, log, jt)
 
 	// Update status
 	if err := r.Status().Update(ctx, jt); err != nil {
 		if apierrors.IsConflict(err) {
 			log.V(1).Info("Conflict updating status, requeueing")
-			return ctrl.Result{Requeue: true}, nil
+			return ctrl.Result{RequeueAfter: 1}, nil
 		}
 		log.Error(err, "Failed to update JinjaTemplate status")
 		return ctrl.Result{}, err
 	}
 
-	return result, reconcileErr
+	return ctrl.Result{}, reconcileErr
 }
 
 // reconcile performs the core reconciliation logic.
-func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger, jt *jtov1.JinjaTemplate) (ctrl.Result, error) {
+func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger, jt *jtov1.JinjaTemplate) error {
 	// Validate spec
 	if err := r.validateSpec(jt); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonInvalidSpec, err.Error())
-		r.Recorder.Eventf(jt, corev1.EventTypeWarning, ReasonInvalidSpec, "Invalid spec: %v", err)
-		return ctrl.Result{}, nil // Don't requeue on validation errors
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonInvalidSpec, "Reconcile", "Invalid spec: %v", err)
+		return nil // Don't requeue on validation errors
 	}
 
 	// Resolve sources
@@ -115,16 +121,16 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	templateContext, err := r.Resolver.Resolve(ctx, jt.Namespace, jt.Spec.Sources)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonSourceResolutionFailed, err.Error())
-		r.Recorder.Eventf(jt, corev1.EventTypeWarning, ReasonSourceResolutionFailed, "Source resolution failed: %v", err)
-		return ctrl.Result{}, fmt.Errorf("source resolution failed: %w", err)
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonSourceResolutionFailed, "Reconcile", "Source resolution failed: %v", err)
+		return fmt.Errorf("source resolution failed: %w", err)
 	}
 
 	// Load template
 	templateStr, err := r.loadTemplate(ctx, jt)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonTemplateLoadFailed, err.Error())
-		r.Recorder.Eventf(jt, corev1.EventTypeWarning, ReasonTemplateLoadFailed, "Template load failed: %v", err)
-		return ctrl.Result{}, fmt.Errorf("template load failed: %w", err)
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonTemplateLoadFailed, "Reconcile", "Template load failed: %v", err)
+		return fmt.Errorf("template load failed: %w", err)
 	}
 
 	// Render template
@@ -132,8 +138,8 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	rendered, err := r.Renderer.Render(templateStr, templateContext)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonRenderFailed, err.Error())
-		r.Recorder.Eventf(jt, corev1.EventTypeWarning, ReasonRenderFailed, "Template rendering failed: %v", err)
-		return ctrl.Result{}, nil // Don't requeue on render errors
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonRenderFailed, "Reconcile", "Template rendering failed: %v", err)
+		return nil // Don't requeue on render errors
 	}
 
 	// Create or update output resource
@@ -144,16 +150,16 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 
 	if err := r.createOrUpdateOutput(ctx, log, jt, outputName, rendered); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonOutputFailed, err.Error())
-		r.Recorder.Eventf(jt, corev1.EventTypeWarning, ReasonOutputFailed, "Output creation/update failed: %v", err)
-		return ctrl.Result{}, fmt.Errorf("output creation/update failed: %w", err)
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonOutputFailed, "Reconcile", "Output creation/update failed: %v", err)
+		return fmt.Errorf("output creation/update failed: %w", err)
 	}
 
 	// Success
 	r.setCondition(jt, metav1.ConditionTrue, ReasonRenderSuccess, "Template rendered successfully")
-	r.Recorder.Event(jt, corev1.EventTypeNormal, ReasonRenderSuccess, "Template rendered and output updated successfully")
+	r.Recorder.Eventf(jt, nil, corev1.EventTypeNormal, ReasonRenderSuccess, "Reconcile", "Template rendered and output updated successfully")
 	log.Info("Successfully reconciled JinjaTemplate", "output", fmt.Sprintf("%s/%s", jt.Spec.Output.Kind, outputName))
 
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // validateSpec validates the JinjaTemplate spec.
@@ -168,7 +174,7 @@ func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 		return fmt.Errorf("only one of spec.template or spec.templateFrom.configMapRef can be provided")
 	}
 
-	if jt.Spec.Output.Kind != "ConfigMap" && jt.Spec.Output.Kind != "Secret" {
+	if jt.Spec.Output.Kind != OutputKindConfigMap && jt.Spec.Output.Kind != OutputKindSecret {
 		return fmt.Errorf("spec.output.kind must be either 'ConfigMap' or 'Secret', got %q", jt.Spec.Output.Kind)
 	}
 
@@ -225,9 +231,9 @@ func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 	}
 
 	switch jt.Spec.Output.Kind {
-	case "ConfigMap":
+	case OutputKindConfigMap:
 		return r.createOrUpdateConfigMap(ctx, log, jt, outputName, rendered, outputLabels, shouldSetOwner)
-	case "Secret":
+	case OutputKindSecret:
 		return r.createOrUpdateSecret(ctx, log, jt, outputName, rendered, outputLabels, shouldSetOwner)
 	default:
 		return fmt.Errorf("unsupported output kind: %s", jt.Spec.Output.Kind)
@@ -370,12 +376,12 @@ func (r *JinjaTemplateReconciler) SetupWithManagerAndName(mgr ctrl.Manager, name
 
 // findJinjaTemplatesForConfigMap maps ConfigMap events to JinjaTemplate reconcile requests.
 func (r *JinjaTemplateReconciler) findJinjaTemplatesForConfigMap(ctx context.Context, obj client.Object) []reconcile.Request {
-	return r.findJinjaTemplatesForObject(ctx, obj, "ConfigMap")
+	return r.findJinjaTemplatesForObject(ctx, obj, OutputKindConfigMap)
 }
 
 // findJinjaTemplatesForSecret maps Secret events to JinjaTemplate reconcile requests.
 func (r *JinjaTemplateReconciler) findJinjaTemplatesForSecret(ctx context.Context, obj client.Object) []reconcile.Request {
-	return r.findJinjaTemplatesForObject(ctx, obj, "Secret")
+	return r.findJinjaTemplatesForObject(ctx, obj, OutputKindSecret)
 }
 
 // findJinjaTemplatesForObject finds all JinjaTemplates that reference the given object.
@@ -414,7 +420,7 @@ func (r *JinjaTemplateReconciler) findJinjaTemplatesForObject(ctx context.Contex
 // objectReferencedByJinjaTemplate checks if the given object is referenced by the JinjaTemplate.
 func (r *JinjaTemplateReconciler) objectReferencedByJinjaTemplate(jt *jtov1.JinjaTemplate, obj client.Object, kind string) bool {
 	// Check if the object is the template source ConfigMap
-	if kind == "ConfigMap" && jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil {
+	if kind == OutputKindConfigMap && jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil {
 		if jt.Spec.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
 			return true
 		}
@@ -422,12 +428,12 @@ func (r *JinjaTemplateReconciler) objectReferencedByJinjaTemplate(jt *jtov1.Jinj
 
 	// Check sources
 	for _, src := range jt.Spec.Sources {
-		if kind == "ConfigMap" && src.ConfigMap != nil {
+		if kind == OutputKindConfigMap && src.ConfigMap != nil {
 			if r.sourceMatchesObject(src.ConfigMap.Name, src.ConfigMap.LabelSelector, obj) {
 				return true
 			}
 		}
-		if kind == "Secret" && src.Secret != nil {
+		if kind == OutputKindSecret && src.Secret != nil {
 			if r.sourceMatchesObject(src.Secret.Name, src.Secret.LabelSelector, obj) {
 				return true
 			}
