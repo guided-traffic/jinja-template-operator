@@ -23,7 +23,9 @@ A Kubernetes Operator that generates **ConfigMaps** and **Secrets** using [Jinja
 ### Helm Chart
 
 ```bash
-helm install jinja-template-operator deploy/helm/jinja-template-operator \
+helm repo add jinja-template-operator https://guided-traffic.github.io/jinja-template-operator
+helm repo update
+helm install jinja-template-operator jinja-template-operator/jinja-template-operator \
   --namespace jinja-template-operator-system \
   --create-namespace
 ```

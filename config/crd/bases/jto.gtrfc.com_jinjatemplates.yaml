@@ -177,6 +177,11 @@ spec:
                     name:
                       description: Name of the output resource. Defaults to the CR name.
                       type: string
+                    key:
+                      description: >-
+                        Key is the data key in the output ConfigMap or Secret where
+                        the rendered template content is stored. Defaults to "content".
+                      type: string
                 setOwnerReference:
                   description: >-
                     SetOwnerReference controls whether the generated resource has
@@ -186,6 +191,21 @@ spec:
               description: JinjaTemplateStatus defines the observed state of a JinjaTemplate.
               type: object
               properties:
+                lastOutput:
+                  description: >-
+                    LastOutput records the most recently created output resource.
+                    Used to detect output target changes and clean up the old resource.
+                  type: object
+                  required:
+                    - kind
+                    - name
+                  properties:
+                    kind:
+                      description: Kind of the output resource (ConfigMap or Secret).
+                      type: string
+                    name:
+                      description: Name of the output resource.
+                      type: string
                 conditions:
                   description: Conditions represent the latest available observations.
                   type: array

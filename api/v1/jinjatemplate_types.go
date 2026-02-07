@@ -102,6 +102,20 @@ type Output struct {
 	// Defaults to the JinjaTemplate CR name if omitted.
 	// +optional
 	Name string `json:"name,omitempty"`
+
+	// Key is the data key in the output ConfigMap or Secret where the rendered
+	// template content is stored. Defaults to "content" if omitted.
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// OutputRef stores a reference to a previously created output resource.
+type OutputRef struct {
+	// Kind is the kind of the output resource (ConfigMap or Secret).
+	Kind string `json:"kind"`
+
+	// Name is the name of the output resource.
+	Name string `json:"name"`
 }
 
 // JinjaTemplateStatus defines the observed state of a JinjaTemplate.
@@ -109,6 +123,11 @@ type JinjaTemplateStatus struct {
 	// Conditions represent the latest available observations of the resource's state.
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// LastOutput records the most recently created output resource.
+	// Used to detect output target changes and clean up the old resource.
+	// +optional
+	LastOutput *OutputRef `json:"lastOutput,omitempty"`
 }
 
 // +kubebuilder:object:root=true

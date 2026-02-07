@@ -48,6 +48,9 @@ const (
 	// ReasonInvalidSpec indicates the CR spec is invalid.
 	ReasonInvalidSpec = "InvalidSpec"
 
+	// ReasonOldOutputDeleted indicates the old output resource was deleted after a target change.
+	ReasonOldOutputDeleted = "OldOutputDeleted"
+
 	// LabelManagedBy is set on generated resources.
 	LabelManagedBy = "jto.gtrfc.com/managed-by"
 
@@ -148,10 +151,22 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 		outputName = jt.Name
 	}
 
+	// Clean up old output if the target changed (different name or kind)
+	if err := r.cleanupOldOutput(ctx, log, jt, outputName); err != nil {
+		log.Error(err, "Failed to clean up old output resource")
+		// Continue anyway — creating the new output is more important
+	}
+
 	if err := r.createOrUpdateOutput(ctx, log, jt, outputName, rendered); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonOutputFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonOutputFailed, "Reconcile", "Output creation/update failed: %v", err)
 		return fmt.Errorf("output creation/update failed: %w", err)
+	}
+
+	// Record current output in status for future cleanup
+	jt.Status.LastOutput = &jtov1.OutputRef{
+		Kind: jt.Spec.Output.Kind,
+		Name: outputName,
 	}
 
 	// Success
@@ -216,6 +231,67 @@ func (r *JinjaTemplateReconciler) loadTemplate(ctx context.Context, jt *jtov1.Ji
 	return "", fmt.Errorf("no template source configured")
 }
 
+// cleanupOldOutput deletes the previously created output resource if the output target
+// (name or kind) has changed. This prevents orphaned resources when users update the CR.
+func (r *JinjaTemplateReconciler) cleanupOldOutput(
+	ctx context.Context,
+	log logr.Logger,
+	jt *jtov1.JinjaTemplate,
+	currentOutputName string,
+) error {
+	last := jt.Status.LastOutput
+	if last == nil {
+		return nil // No previous output recorded
+	}
+
+	// Check if the target changed
+	if last.Kind == jt.Spec.Output.Kind && last.Name == currentOutputName {
+		return nil // Same target, nothing to clean up
+	}
+
+	log.Info("Output target changed, deleting old output resource",
+		"oldKind", last.Kind, "oldName", last.Name,
+		"newKind", jt.Spec.Output.Kind, "newName", currentOutputName,
+	)
+
+	if err := r.deleteOldOutput(ctx, jt.Namespace, last.Kind, last.Name); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.V(1).Info("Old output resource already deleted", "kind", last.Kind, "name", last.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to delete old output %s/%s: %w", last.Kind, last.Name, err)
+	}
+
+	r.Recorder.Eventf(jt, nil, corev1.EventTypeNormal, ReasonOldOutputDeleted, "Reconcile",
+		"Deleted old output %s/%s after target change", last.Kind, last.Name)
+
+	return nil
+}
+
+// deleteOldOutput deletes a ConfigMap or Secret by kind and name in the given namespace.
+func (r *JinjaTemplateReconciler) deleteOldOutput(ctx context.Context, namespace, kind, name string) error {
+	switch kind {
+	case OutputKindConfigMap:
+		obj := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+		}
+		return r.Delete(ctx, obj)
+	case OutputKindSecret:
+		obj := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: namespace,
+			},
+		}
+		return r.Delete(ctx, obj)
+	default:
+		return fmt.Errorf("unsupported output kind for deletion: %s", kind)
+	}
+}
+
 // createOrUpdateOutput creates or updates the output ConfigMap or Secret.
 func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 	ctx context.Context,
@@ -240,6 +316,15 @@ func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 	}
 }
 
+// outputKey returns the data key for the rendered content.
+// Defaults to "content" if not specified in the CR.
+func outputKey(jt *jtov1.JinjaTemplate) string {
+	if jt.Spec.Output.Key != "" {
+		return jt.Spec.Output.Key
+	}
+	return "content"
+}
+
 // createOrUpdateConfigMap creates or updates a ConfigMap with the rendered content.
 func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	ctx context.Context,
@@ -259,7 +344,7 @@ func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = mergeLabels(cm.Labels, outputLabels)
 		cm.Data = map[string]string{
-			"content": rendered,
+			outputKey(jt): rendered,
 		}
 
 		if shouldSetOwner {
@@ -296,7 +381,7 @@ func (r *JinjaTemplateReconciler) createOrUpdateSecret(
 		secret.Labels = mergeLabels(secret.Labels, outputLabels)
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{
-			"content": []byte(rendered),
+			outputKey(jt): []byte(rendered),
 		}
 
 		if shouldSetOwner {
@@ -396,7 +481,7 @@ func (r *JinjaTemplateReconciler) findJinjaTemplatesForObject(ctx context.Contex
 
 	var requests []reconcile.Request
 	for _, jt := range jtList.Items {
-		if r.objectReferencedByJinjaTemplate(&jt, obj, kind) {
+		if r.objectReferencedByJinjaTemplate(&jt, obj, kind) || r.objectIsOutputOfJinjaTemplate(&jt, obj, kind) {
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Name:      jt.Name,
@@ -415,6 +500,19 @@ func (r *JinjaTemplateReconciler) findJinjaTemplatesForObject(ctx context.Contex
 	}
 
 	return requests
+}
+
+// objectIsOutputOfJinjaTemplate checks if the given object is the output target of the JinjaTemplate.
+// This enables the operator to re-reconcile (and restore) the output when it is deleted or modified externally.
+func (r *JinjaTemplateReconciler) objectIsOutputOfJinjaTemplate(jt *jtov1.JinjaTemplate, obj client.Object, kind string) bool {
+	if jt.Spec.Output.Kind != kind {
+		return false
+	}
+	outputName := jt.Spec.Output.Name
+	if outputName == "" {
+		outputName = jt.Name
+	}
+	return obj.GetName() == outputName
 }
 
 // objectReferencedByJinjaTemplate checks if the given object is referenced by the JinjaTemplate.

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -1289,6 +1290,495 @@ func TestReconcileMultipleJinjaTemplatesWatching(t *testing.T) {
 	}
 	assert.True(t, names["jt-one"])
 	assert.True(t, names["jt-two"])
+}
+
+func TestReconcileWithCustomOutputKey(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"val": "hello",
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-key-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "v",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "val"},
+				},
+			},
+			Template: "result={{ v }}",
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Name: "custom-key-output",
+				Key:  "config.json",
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "custom-key-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	outputCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "custom-key-output", Namespace: "default",
+	}, outputCM)
+	require.NoError(t, err)
+	// Should use the custom key, not "content"
+	assert.Equal(t, "result=hello", outputCM.Data["config.json"])
+	assert.Empty(t, outputCM.Data["content"])
+}
+
+func TestReconcileSecretWithCustomOutputKey(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"token": []byte("mytoken"),
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "secret-key-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:   "tok",
+					Secret: &jtov1.SecretSource{Name: "src-secret", Key: "token"},
+				},
+			},
+			Template: "TOKEN={{ tok }}",
+			Output: jtov1.Output{
+				Kind: "Secret",
+				Name: "secret-key-output",
+				Key:  "credentials.env",
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(secret, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "secret-key-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	outputSecret := &corev1.Secret{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "secret-key-output", Namespace: "default",
+	}, outputSecret)
+	require.NoError(t, err)
+	assert.Equal(t, "TOKEN=mytoken", string(outputSecret.Data["credentials.env"]))
+	assert.Empty(t, outputSecret.Data["content"])
+}
+
+func TestOutputKeyDefaultsToContent(t *testing.T) {
+	jt := &jtov1.JinjaTemplate{
+		Spec: jtov1.JinjaTemplateSpec{
+			Output: jtov1.Output{Kind: "ConfigMap"},
+		},
+	}
+	assert.Equal(t, "content", outputKey(jt))
+
+	jt.Spec.Output.Key = "custom.yaml"
+	assert.Equal(t, "custom.yaml", outputKey(jt))
+}
+
+func TestObjectIsOutputOfJinjaTemplate(t *testing.T) {
+	reconciler, _ := newTestReconciler()
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Template: "hello",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "my-output"},
+		},
+	}
+
+	// Matching output ConfigMap
+	assert.True(t, reconciler.objectIsOutputOfJinjaTemplate(jt,
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "my-output"}}, OutputKindConfigMap))
+
+	// Wrong kind
+	assert.False(t, reconciler.objectIsOutputOfJinjaTemplate(jt,
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "my-output"}}, OutputKindSecret))
+
+	// Wrong name
+	assert.False(t, reconciler.objectIsOutputOfJinjaTemplate(jt,
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "other"}}, OutputKindConfigMap))
+
+	// Output name defaults to CR name when not specified
+	jtNoName := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "default-name-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Template: "hello",
+			Output:   jtov1.Output{Kind: "Secret"},
+		},
+	}
+	assert.True(t, reconciler.objectIsOutputOfJinjaTemplate(jtNoName,
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "default-name-jt"}}, OutputKindSecret))
+}
+
+func TestFindJinjaTemplatesForOutputConfigMap(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "v"},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "restore-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "val",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "k"},
+				},
+			},
+			Template: "V={{ val }}",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "generated-cm"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	// The output ConfigMap should trigger reconciliation
+	outputCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "generated-cm",
+			Namespace: "default",
+		},
+	}
+	requests := reconciler.findJinjaTemplatesForConfigMap(context.Background(), outputCM)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "restore-jt", requests[0].Name)
+
+	// An unrelated ConfigMap should NOT trigger reconciliation
+	unrelatedCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "something-else",
+			Namespace: "default",
+		},
+	}
+	requests = reconciler.findJinjaTemplatesForConfigMap(context.Background(), unrelatedCM)
+	assert.Empty(t, requests)
+}
+
+func TestFindJinjaTemplatesForOutputSecret(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{"token": []byte("abc")},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "restore-secret-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:   "tok",
+					Secret: &jtov1.SecretSource{Name: "src-secret", Key: "token"},
+				},
+			},
+			Template: "TOKEN={{ tok }}",
+			Output:   jtov1.Output{Kind: "Secret", Name: "generated-secret"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(secret, jt)
+
+	outputSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "generated-secret",
+			Namespace: "default",
+		},
+	}
+	requests := reconciler.findJinjaTemplatesForSecret(context.Background(), outputSecret)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "restore-secret-jt", requests[0].Name)
+}
+
+func TestReconcileRestoresModifiedOutput(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "correct"},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "restore-test",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "val",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "k"},
+				},
+			},
+			Template: "DATA={{ val }}",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "managed-output"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	// First reconcile — creates the output
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "restore-test", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	outputCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "managed-output", Namespace: "default",
+	}, outputCM)
+	require.NoError(t, err)
+	assert.Equal(t, "DATA=correct", outputCM.Data["content"])
+
+	// Simulate external modification
+	outputCM.Data["content"] = "TAMPERED"
+	err = reconciler.Update(context.Background(), outputCM)
+	require.NoError(t, err)
+
+	// Second reconcile — should restore the correct content
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "restore-test", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "managed-output", Namespace: "default",
+	}, outputCM)
+	require.NoError(t, err)
+	assert.Equal(t, "DATA=correct", outputCM.Data["content"])
+}
+
+func TestCleanupOldOutputOnNameChange(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "v"},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cleanup-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "val",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "k"},
+				},
+			},
+			Template: "V={{ val }}",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "old-output"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	// First reconcile — creates "old-output"
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "cleanup-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	// Verify old output exists
+	oldCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "old-output", Namespace: "default",
+	}, oldCM)
+	require.NoError(t, err)
+	assert.Equal(t, "V=v", oldCM.Data["content"])
+
+	// Re-fetch JT to get updated status (with LastOutput)
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "cleanup-jt", Namespace: "default",
+	}, jt)
+	require.NoError(t, err)
+	require.NotNil(t, jt.Status.LastOutput)
+	assert.Equal(t, "old-output", jt.Status.LastOutput.Name)
+
+	// Change output name
+	jt.Spec.Output.Name = "new-output"
+	err = reconciler.Update(context.Background(), jt)
+	require.NoError(t, err)
+
+	// Second reconcile — should delete "old-output" and create "new-output"
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "cleanup-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	// Old output should be gone
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "old-output", Namespace: "default",
+	}, oldCM)
+	assert.True(t, apierrors.IsNotFound(err), "old output should be deleted")
+
+	// New output should exist
+	newCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "new-output", Namespace: "default",
+	}, newCM)
+	require.NoError(t, err)
+	assert.Equal(t, "V=v", newCM.Data["content"])
+}
+
+func TestCleanupOldOutputOnKindChange(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "v"},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kind-change-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "val",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "k"},
+				},
+			},
+			Template: "V={{ val }}",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "my-output"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	// First reconcile — creates ConfigMap "my-output"
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "kind-change-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	oldCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "my-output", Namespace: "default",
+	}, oldCM)
+	require.NoError(t, err)
+
+	// Re-fetch JT, change kind to Secret
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "kind-change-jt", Namespace: "default",
+	}, jt)
+	require.NoError(t, err)
+
+	jt.Spec.Output.Kind = "Secret"
+	err = reconciler.Update(context.Background(), jt)
+	require.NoError(t, err)
+
+	// Second reconcile — should delete ConfigMap and create Secret
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "kind-change-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	// Old ConfigMap should be gone
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "my-output", Namespace: "default",
+	}, oldCM)
+	assert.True(t, apierrors.IsNotFound(err), "old ConfigMap should be deleted")
+
+	// New Secret should exist
+	newSecret := &corev1.Secret{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "my-output", Namespace: "default",
+	}, newSecret)
+	require.NoError(t, err)
+	assert.Equal(t, "V=v", string(newSecret.Data["content"]))
+}
+
+func TestCleanupNoOpWhenTargetUnchanged(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{"k": "v"},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "noop-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "val",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "k"},
+				},
+			},
+			Template: "V={{ val }}",
+			Output:   jtov1.Output{Kind: "ConfigMap", Name: "stable-output"},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	// Reconcile twice with the same target — output should still exist
+	for i := 0; i < 2; i++ {
+		_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+			NamespacedName: types.NamespacedName{Name: "noop-jt", Namespace: "default"},
+		})
+		require.NoError(t, err)
+	}
+
+	outputCM := &corev1.ConfigMap{}
+	err := reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "stable-output", Namespace: "default",
+	}, outputCM)
+	require.NoError(t, err)
+	assert.Equal(t, "V=v", outputCM.Data["content"])
 }
 
 func TestFindJinjaTemplatesDifferentNamespace(t *testing.T) {
