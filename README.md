@@ -4,6 +4,7 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/guided-traffic/jinja-template-operator/main/.github/badges/coverage.json)](https://github.com/guided-traffic/jinja-template-operator)
 [![Docker Hub](https://img.shields.io/docker/v/guidedtraffic/jinja-template-operator?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/guidedtraffic/jinja-template-operator)
 [![License](https://img.shields.io/github/license/guided-traffic/jinja-template-operator)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/gonja)](https://github.com/guided-traffic/gonja/blob/main/go.mod)
 
 A Kubernetes Operator that generates **ConfigMaps** and **Secrets** using [Jinja-like templates](https://github.com/guided-traffic/gonja). Define your template variables from existing ConfigMaps or Secrets — either by direct reference or via label selectors — and let the operator render and manage the output automatically.
 
@@ -71,6 +72,7 @@ spec:
 
   output:
     kind: ConfigMap
+    key: app.env
 ```
 
 ### Example 2: Label Selector with Loop
@@ -102,6 +104,7 @@ spec:
   output:
     kind: ConfigMap
     name: all-endpoints
+    key: endpoints.conf
 ```
 
 ### Example 3: External Template + Mixed Sources
@@ -140,6 +143,7 @@ spec:
   output:
     kind: Secret
     name: nginx-rendered-config
+    key: nginx.conf
 ```
 
 ## Spec Reference
@@ -160,6 +164,7 @@ spec:
 | `spec.templateFrom.configMapRef.key` | `string` | No² | Key within the ConfigMap holding the template |
 | `spec.output.kind` | `string` | Yes | `ConfigMap` or `Secret` |
 | `spec.output.name` | `string` | No | Name of the generated resource (defaults to CR name) |
+| `spec.output.key` | `string` | No | Data key in the output ConfigMap/Secret (defaults to `content`) |
 
 > ¹ Each source must specify either `configMap` or `secret` (not both). Within each, use either `name`+`key` (direct reference) or `labelSelector` (list).
 >
