@@ -188,6 +188,13 @@
         "digest",
         "pin"
       ]
+    },
+    {
+      "description": "GitHub Actions: use 'chore' instead of 'fix' for updates",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitType": "chore"
     }
   ],
   "customManagers": [
