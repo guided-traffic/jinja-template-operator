@@ -177,6 +177,11 @@ spec:
                     name:
                       description: Name of the output resource. Defaults to the CR name.
                       type: string
+                    key:
+                      description: >-
+                        Key is the data key in the output ConfigMap or Secret where
+                        the rendered template content is stored. Defaults to "content".
+                      type: string
                 setOwnerReference:
                   description: >-
                     SetOwnerReference controls whether the generated resource has

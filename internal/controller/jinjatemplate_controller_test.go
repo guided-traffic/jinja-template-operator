@@ -1291,6 +1291,115 @@ func TestReconcileMultipleJinjaTemplatesWatching(t *testing.T) {
 	assert.True(t, names["jt-two"])
 }
 
+func TestReconcileWithCustomOutputKey(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"val": "hello",
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "custom-key-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "v",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "src", Key: "val"},
+				},
+			},
+			Template: "result={{ v }}",
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Name: "custom-key-output",
+				Key:  "config.json",
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "custom-key-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	outputCM := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "custom-key-output", Namespace: "default",
+	}, outputCM)
+	require.NoError(t, err)
+	// Should use the custom key, not "content"
+	assert.Equal(t, "result=hello", outputCM.Data["config.json"])
+	assert.Empty(t, outputCM.Data["content"])
+}
+
+func TestReconcileSecretWithCustomOutputKey(t *testing.T) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "src-secret",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"token": []byte("mytoken"),
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "secret-key-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:   "tok",
+					Secret: &jtov1.SecretSource{Name: "src-secret", Key: "token"},
+				},
+			},
+			Template: "TOKEN={{ tok }}",
+			Output: jtov1.Output{
+				Kind: "Secret",
+				Name: "secret-key-output",
+				Key:  "credentials.env",
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(secret, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "secret-key-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	outputSecret := &corev1.Secret{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "secret-key-output", Namespace: "default",
+	}, outputSecret)
+	require.NoError(t, err)
+	assert.Equal(t, "TOKEN=mytoken", string(outputSecret.Data["credentials.env"]))
+	assert.Empty(t, outputSecret.Data["content"])
+}
+
+func TestOutputKeyDefaultsToContent(t *testing.T) {
+	jt := &jtov1.JinjaTemplate{
+		Spec: jtov1.JinjaTemplateSpec{
+			Output: jtov1.Output{Kind: "ConfigMap"},
+		},
+	}
+	assert.Equal(t, "content", outputKey(jt))
+
+	jt.Spec.Output.Key = "custom.yaml"
+	assert.Equal(t, "custom.yaml", outputKey(jt))
+}
+
 func TestFindJinjaTemplatesDifferentNamespace(t *testing.T) {
 	jt := &jtov1.JinjaTemplate{
 		ObjectMeta: metav1.ObjectMeta{

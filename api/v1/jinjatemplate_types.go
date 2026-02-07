@@ -102,6 +102,11 @@ type Output struct {
 	// Defaults to the JinjaTemplate CR name if omitted.
 	// +optional
 	Name string `json:"name,omitempty"`
+
+	// Key is the data key in the output ConfigMap or Secret where the rendered
+	// template content is stored. Defaults to "content" if omitted.
+	// +optional
+	Key string `json:"key,omitempty"`
 }
 
 // JinjaTemplateStatus defines the observed state of a JinjaTemplate.

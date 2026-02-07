@@ -53,6 +53,7 @@ Each source provides variables for the Jinja template context. Rules:
 
 - `spec.output.kind` (required): either `ConfigMap` or `Secret`.
 - `spec.output.name` (optional): name of the generated resource. Defaults to the CR's own name if omitted.
+- `spec.output.key` (optional): the data key in the output ConfigMap or Secret where the rendered content is stored. Defaults to `"content"` if omitted.
 
 ### Owner Reference (`spec.setOwnerReference`)
 
@@ -106,6 +107,8 @@ spec:
   output:
     kind: ConfigMap
     # name defaults to "app-config" (same as CR name)
+    # key defaults to "content" if omitted
+    key: app.env
 ```
 
 ## Reconciliation Behavior

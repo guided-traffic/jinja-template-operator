@@ -240,6 +240,15 @@ func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 	}
 }
 
+// outputKey returns the data key for the rendered content.
+// Defaults to "content" if not specified in the CR.
+func outputKey(jt *jtov1.JinjaTemplate) string {
+	if jt.Spec.Output.Key != "" {
+		return jt.Spec.Output.Key
+	}
+	return "content"
+}
+
 // createOrUpdateConfigMap creates or updates a ConfigMap with the rendered content.
 func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	ctx context.Context,
@@ -259,7 +268,7 @@ func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = mergeLabels(cm.Labels, outputLabels)
 		cm.Data = map[string]string{
-			"content": rendered,
+			outputKey(jt): rendered,
 		}
 
 		if shouldSetOwner {
@@ -296,7 +305,7 @@ func (r *JinjaTemplateReconciler) createOrUpdateSecret(
 		secret.Labels = mergeLabels(secret.Labels, outputLabels)
 		secret.Type = corev1.SecretTypeOpaque
 		secret.Data = map[string][]byte{
-			"content": []byte(rendered),
+			outputKey(jt): []byte(rendered),
 		}
 
 		if shouldSetOwner {
