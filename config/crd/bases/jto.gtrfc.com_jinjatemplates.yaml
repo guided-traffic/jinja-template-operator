@@ -191,6 +191,21 @@ spec:
               description: JinjaTemplateStatus defines the observed state of a JinjaTemplate.
               type: object
               properties:
+                lastOutput:
+                  description: >-
+                    LastOutput records the most recently created output resource.
+                    Used to detect output target changes and clean up the old resource.
+                  type: object
+                  required:
+                    - kind
+                    - name
+                  properties:
+                    kind:
+                      description: Kind of the output resource (ConfigMap or Secret).
+                      type: string
+                    name:
+                      description: Name of the output resource.
+                      type: string
                 conditions:
                   description: Conditions represent the latest available observations.
                   type: array
