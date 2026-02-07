@@ -191,6 +191,23 @@ vuln: ## Check for vulnerabilities.
 	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
 	GOFLAGS="-buildvcs=false" govulncheck ./...
 
+##@ Code Generation
+
+HELM_CHART_DIR = deploy/helm/jinja-template-operator
+CRD_SOURCE = config/crd/bases/jto.gtrfc.com_jinjatemplates.yaml
+CRD_HELM_TARGET = $(HELM_CHART_DIR)/templates/crd.yaml
+
+.PHONY: sync-helm-crd
+sync-helm-crd: ## Sync generated CRD into Helm chart (single source of truth: config/crd/bases/).
+	@echo "Syncing CRD to Helm chart..."
+	@awk '/^  name: jinjatemplates\.jto\.gtrfc\.com$$/ { \
+		print; \
+		print "  labels:"; \
+		print "    {{- include \"jinja-template-operator.labels\" . | nindent 4 }}"; \
+		next \
+	} {print}' $(CRD_SOURCE) > $(CRD_HELM_TARGET)
+	@echo "CRD synced to $(CRD_HELM_TARGET)"
+
 ##@ Build
 
 .PHONY: build

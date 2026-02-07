@@ -9,7 +9,7 @@ rules:
   - apiGroups:
       - jto.gtrfc.com
     resources:
-      - jinjaTemplates
+      - jinjatemplates
     verbs:
       - create
       - delete
@@ -21,7 +21,7 @@ rules:
   - apiGroups:
       - jto.gtrfc.com
     resources:
-      - jinjaTemplates/status
+      - jinjatemplates/status
     verbs:
       - get
       - patch
@@ -29,7 +29,7 @@ rules:
   - apiGroups:
       - jto.gtrfc.com
     resources:
-      - jinjaTemplates/finalizers
+      - jinjatemplates/finalizers
     verbs:
       - update
   # ConfigMap management (read sources + create/update outputs)
