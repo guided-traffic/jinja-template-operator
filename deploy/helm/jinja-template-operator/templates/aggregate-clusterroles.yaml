@@ -1,0 +1,65 @@
+{{- if .Values.rbac.createAggregateClusterRoles }}
+# Aggregate ClusterRole for admin — full CRUD on JinjaTemplates
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-aggregate-admin
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates
+    verbs:
+      - create
+      - delete
+      - deletecollection
+      - get
+      - list
+      - patch
+      - update
+      - watch
+---
+# Aggregate ClusterRole for edit — full CRUD on JinjaTemplates
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-aggregate-edit
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates
+    verbs:
+      - create
+      - delete
+      - deletecollection
+      - get
+      - list
+      - patch
+      - update
+      - watch
+---
+# Aggregate ClusterRole for view — read-only access to JinjaTemplates
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-aggregate-view
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups:
+      - jto.gtrfc.com
+    resources:
+      - jinjatemplates
+    verbs:
+      - get
+      - list
+      - watch
+{{- end }}

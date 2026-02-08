@@ -30,6 +30,12 @@ serviceAccount:
   # If not set and create is true, a name is generated using the fullname template.
   name: ""
 
+# RBAC configuration
+rbac:
+  # Whether to create aggregate ClusterRoles that add JinjaTemplate
+  # permissions to the default Kubernetes admin, edit and view roles.
+  createAggregateClusterRoles: true
+
 # Pod-level settings
 podAnnotations: {}
 podLabels: {}
