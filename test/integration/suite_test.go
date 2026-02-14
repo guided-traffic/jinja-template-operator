@@ -61,11 +61,11 @@ func TestMain(m *testing.M) {
 		zap.StacktraceLevel(zapcore.PanicLevel),
 	))
 
-	// Set KUBEBUILDER_ASSETS if not already set (for local development on macOS ARM64)
+	// KUBEBUILDER_ASSETS must be set by the Makefile via setup-envtest
+	// Run tests with: make test-integration
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		projectRoot := getProjectRoot()
-		kubebuilderAssets := filepath.Join(projectRoot, "bin", "k8s", "1.29.0-darwin-arm64")
-		os.Setenv("KUBEBUILDER_ASSETS", kubebuilderAssets)
+		logf.Log.Error(nil, "KUBEBUILDER_ASSETS environment variable is not set. Run tests using 'make test-integration' or 'make test-integration-coverage'")
+		os.Exit(1)
 	}
 
 	// Configure envtest with CRD paths
