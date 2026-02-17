@@ -4,7 +4,7 @@
 [![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/guided-traffic/jinja-template-operator/main/.github/badges/coverage.json)](https://github.com/guided-traffic/jinja-template-operator)
 [![Docker Hub](https://img.shields.io/docker/v/guidedtraffic/jinja-template-operator?label=Docker%20Hub&sort=semver)](https://hub.docker.com/r/guidedtraffic/jinja-template-operator)
 [![License](https://img.shields.io/github/license/guided-traffic/jinja-template-operator)](LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/gonja)](https://github.com/guided-traffic/gonja/blob/main/go.mod)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/guided-traffic/jinja-template-operator)](https://github.com/guided-traffic/jinja-template-operator/blob/main/go.mod)
 
 A Kubernetes Operator that generates **ConfigMaps** and **Secrets** using [Jinja-like templates](https://github.com/guided-traffic/gonja). Define your template variables from existing ConfigMaps or Secrets — either by direct reference or via label selectors — and let the operator render and manage the output automatically.
 
@@ -36,6 +36,17 @@ helm install jinja-template-operator jinja-template-operator/jinja-template-oper
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `operator.defaultOwnerReference` | Global default for OwnerReference on generated resources | `true` |
+| `image.repository` | Container image repository | `guidedtraffic/jinja-template-operator` |
+| `image.tag` | Image tag (defaults to chart `appVersion`) | `""` |
+| `image.pullPolicy` | Image pull policy | `IfNotPresent` |
+| `replicaCount` | Number of operator replicas | `1` |
+| `rbac.createAggregateClusterRoles` | Create aggregate ClusterRoles for admin/edit/view | `true` |
+| `leaderElection.enabled` | Enable leader election for HA | `true` |
+| `logLevel` | Operator log level | `info` |
+| `resources.limits.cpu` | CPU limit | `500m` |
+| `resources.limits.memory` | Memory limit | `128Mi` |
+| `resources.requests.cpu` | CPU request | `10m` |
+| `resources.requests.memory` | Memory request | `64Mi` |
 
 ## Usage
 
@@ -206,7 +217,7 @@ kubectl describe jinjatemplate <name>
 ## Development
 
 ### Prerequisites
-- Go 1.25.7
+- Go 1.26.0
 - Docker
 - Kind (for E2E tests)
 - Helm
