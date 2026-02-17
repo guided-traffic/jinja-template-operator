@@ -28,10 +28,19 @@ go.work.sum
 # env file
 .env
 
+# Python virtual environments
+.venv/
+__pycache__/
+
 # Editor/IDE
 # .idea/
 # .vscode/
 
 # Node.js dependencies (for semantic-release)
 node_modules/
+
+# Coverage directory
+coverage/
+
+# Built binary
 main
