@@ -80,6 +80,11 @@ var testJinjaTemplateNames = []string{
 	"e2e-missing-source",
 	"e2e-bad-template-syntax",
 	"e2e-labelselector-dynamic",
+	"e2e-custom-output-key-cm",
+	"e2e-custom-output-key-secret",
+	"e2e-tpl-change-rerender",
+	"e2e-secret-labelselector-dyn",
+	"e2e-labelselector-delete",
 }
 
 // testHelperResourceNames tracks helper ConfigMaps/Secrets created for tests.
@@ -93,12 +98,18 @@ var testHelperConfigMapNames = []string{
 	"e2e-endpoint-beta",
 	"e2e-endpoint-dynamic-gamma",
 	"e2e-src-cm-loop",
+	"e2e-src-cm-tpl-change",
+	"e2e-tpl-change-template",
+	"e2e-del-ep-one",
+	"e2e-del-ep-two",
 }
 
 var testHelperSecretNames = []string{
 	"e2e-src-secret-creds",
 	"e2e-labeled-secret-one",
 	"e2e-labeled-secret-two",
+	"e2e-dyn-secret-alpha",
+	"e2e-dyn-secret-beta",
 }
 
 // testOutputResourceNames tracks operator-generated output resources.
@@ -115,12 +126,17 @@ var testOutputConfigMapNames = []string{
 	"e2e-multiple-sources",
 	"e2e-jinja-loop-filters",
 	"e2e-labelselector-dynamic",
+	"e2e-custom-output-key-cm",
+	"e2e-tpl-change-rerender",
+	"e2e-secret-labelselector-dyn",
+	"e2e-labelselector-delete",
 }
 
 var testOutputSecretNames = []string{
 	"e2e-basic-secret",
 	"e2e-source-secret-direct",
 	"e2e-source-secret-labelselector",
+	"e2e-custom-output-key-secret",
 }
 
 func TestMain(m *testing.M) {
@@ -254,6 +270,20 @@ func setOutput(obj *unstructured.Unstructured, kind, name string) {
 	}
 	if name != "" {
 		output["name"] = name
+	}
+	spec["output"] = output
+}
+
+func setOutputWithKey(obj *unstructured.Unstructured, kind, name, key string) {
+	spec := obj.Object["spec"].(map[string]interface{})
+	output := map[string]interface{}{
+		"kind": kind,
+	}
+	if name != "" {
+		output["name"] = name
+	}
+	if key != "" {
+		output["key"] = key
 	}
 	spec["output"] = output
 }
@@ -405,6 +435,11 @@ func waitForSecret(t *testing.T, name string) *corev1.Secret {
 
 func waitForConfigMapContent(t *testing.T, name, expectedContent string) *corev1.ConfigMap {
 	t.Helper()
+	return waitForConfigMapKeyContentE2E(t, name, "content", expectedContent)
+}
+
+func waitForConfigMapKeyContentE2E(t *testing.T, name, dataKey, expectedContent string) *corev1.ConfigMap {
+	t.Helper()
 	ctx := context.Background()
 	var result *corev1.ConfigMap
 	err := wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
@@ -412,14 +447,35 @@ func waitForConfigMapContent(t *testing.T, name, expectedContent string) *corev1
 		if err != nil {
 			return false, nil
 		}
-		if cm.Data["content"] == expectedContent {
+		if cm.Data[dataKey] == expectedContent {
 			result = cm
 			return true, nil
 		}
 		return false, nil
 	})
 	if err != nil {
-		t.Fatalf("Timeout waiting for ConfigMap %s to have expected content: %v", name, err)
+		t.Fatalf("Timeout waiting for ConfigMap %s key %q to have expected content: %v", name, dataKey, err)
+	}
+	return result
+}
+
+func waitForSecretKeyContentE2E(t *testing.T, name, dataKey, expectedContent string) *corev1.Secret {
+	t.Helper()
+	ctx := context.Background()
+	var result *corev1.Secret
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		s, err := clientset.CoreV1().Secrets(testNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		if string(s.Data[dataKey]) == expectedContent {
+			result = s
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for Secret %s key %q to have expected content: %v", name, dataKey, err)
 	}
 	return result
 }
@@ -1165,4 +1221,266 @@ func TestLabelSelectorDynamicMatch(t *testing.T) {
 	}
 
 	t.Log("Label selector dynamic match test passed")
+}
+
+// ---------------------------------------------------------------------------
+// Test: Custom output key on ConfigMap
+// ---------------------------------------------------------------------------
+
+func TestCustomOutputKeyConfigMap(t *testing.T) {
+	const name = "e2e-custom-output-key-cm"
+	defer cleanupJinjaTemplate(t, name)
+	defer cleanupConfigMap(t, name)
+
+	jt := newJinjaTemplateObj(name)
+	setInlineTemplate(jt, "DATABASE_URL=postgres://localhost/mydb")
+	setOutputWithKey(jt, "ConfigMap", "", "app.env")
+
+	createJinjaTemplate(t, jt)
+	waitForJinjaTemplateReady(t, name)
+
+	cm := waitForConfigMapKeyContentE2E(t, name, "app.env", "DATABASE_URL=postgres://localhost/mydb")
+
+	// Verify the custom key is used
+	if cm.Data["app.env"] != "DATABASE_URL=postgres://localhost/mydb" {
+		t.Errorf("Expected data under key 'app.env', got data: %v", cm.Data)
+	}
+
+	// Verify the default key is NOT present
+	if _, hasDefault := cm.Data["content"]; hasDefault {
+		t.Error("Expected 'content' key to NOT be present when custom key is set")
+	}
+
+	t.Log("Custom output key ConfigMap test passed")
+}
+
+// ---------------------------------------------------------------------------
+// Test: Custom output key on Secret
+// ---------------------------------------------------------------------------
+
+func TestCustomOutputKeySecret(t *testing.T) {
+	const name = "e2e-custom-output-key-secret"
+	defer cleanupJinjaTemplate(t, name)
+	defer cleanupSecret(t, name)
+
+	jt := newJinjaTemplateObj(name)
+	setInlineTemplate(jt, "API_TOKEN=tok-12345")
+	setOutputWithKey(jt, "Secret", "", "credentials.yaml")
+
+	createJinjaTemplate(t, jt)
+	waitForJinjaTemplateReady(t, name)
+
+	s := waitForSecretKeyContentE2E(t, name, "credentials.yaml", "API_TOKEN=tok-12345")
+
+	if string(s.Data["credentials.yaml"]) != "API_TOKEN=tok-12345" {
+		t.Errorf("Expected data under key 'credentials.yaml', got data keys: %v", s.Data)
+	}
+
+	if _, hasDefault := s.Data["content"]; hasDefault {
+		t.Error("Expected 'content' key to NOT be present when custom key is set")
+	}
+
+	t.Log("Custom output key Secret test passed")
+}
+
+// ---------------------------------------------------------------------------
+// Test: TemplateFrom ConfigMap change triggers re-render
+// ---------------------------------------------------------------------------
+
+func TestTemplateFromConfigMapChangeRerender(t *testing.T) {
+	const name = "e2e-tpl-change-rerender"
+	const srcCM = "e2e-src-cm-tpl-change"
+	const tplCM = "e2e-tpl-change-template"
+	defer cleanupJinjaTemplate(t, name)
+	defer cleanupConfigMap(t, name)
+	defer cleanupConfigMap(t, srcCM)
+	defer cleanupConfigMap(t, tplCM)
+
+	ctx := context.Background()
+
+	// Create source ConfigMap
+	_, err := clientset.CoreV1().ConfigMaps(testNamespace).Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: srcCM, Namespace: testNamespace},
+		Data:       map[string]string{"app": "myservice"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create source ConfigMap: %v", err)
+	}
+
+	// Create template ConfigMap with initial template
+	_, err = clientset.CoreV1().ConfigMaps(testNamespace).Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: tplCM, Namespace: testNamespace},
+		Data:       map[string]string{"tpl": "APP_NAME={{ app }}"},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create template ConfigMap: %v", err)
+	}
+
+	jt := newJinjaTemplateObj(name)
+	addSourceConfigMapDirect(jt, "app", srcCM, "app")
+	setTemplateFrom(jt, tplCM, "tpl")
+	setOutput(jt, "ConfigMap", "")
+
+	createJinjaTemplate(t, jt)
+	waitForJinjaTemplateReady(t, name)
+
+	// Verify initial output
+	waitForConfigMapContent(t, name, "APP_NAME=myservice")
+	t.Log("Initial templateFrom content verified: APP_NAME=myservice")
+
+	// Update the template ConfigMap
+	tplObj, err := clientset.CoreV1().ConfigMaps(testNamespace).Get(ctx, tplCM, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Failed to get template ConfigMap: %v", err)
+	}
+	tplObj.Data["tpl"] = "APPLICATION={{ app | upper }}"
+	_, err = clientset.CoreV1().ConfigMaps(testNamespace).Update(ctx, tplObj, metav1.UpdateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to update template ConfigMap: %v", err)
+	}
+
+	// Wait for re-rendered output
+	waitForConfigMapContent(t, name, "APPLICATION=MYSERVICE")
+
+	t.Log("TemplateFrom ConfigMap change re-render test passed")
+}
+
+// ---------------------------------------------------------------------------
+// Test: Secret label selector dynamic matching
+// ---------------------------------------------------------------------------
+
+func TestSecretLabelSelectorDynamicMatch(t *testing.T) {
+	const name = "e2e-secret-labelselector-dyn"
+	defer cleanupJinjaTemplate(t, name)
+	defer cleanupConfigMap(t, name)
+	defer cleanupSecret(t, "e2e-dyn-secret-alpha")
+	defer cleanupSecret(t, "e2e-dyn-secret-beta")
+
+	ctx := context.Background()
+
+	// Create initial labeled Secret
+	_, err := clientset.CoreV1().Secrets(testNamespace).Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-dyn-secret-alpha",
+			Namespace: testNamespace,
+			Labels:    map[string]string{"e2e-dyn-type": "api-cred"},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"token": []byte("alpha-tok")},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create initial Secret: %v", err)
+	}
+
+	jt := newJinjaTemplateObj(name)
+	addSourceSecretLabelSelector(jt, "creds", map[string]interface{}{"e2e-dyn-type": "api-cred"})
+	setInlineTemplate(jt, "{% for c in creds %}{{ c.name }}={{ c.data.token }}\n{% endfor %}")
+	setOutput(jt, "ConfigMap", "")
+
+	createJinjaTemplate(t, jt)
+	waitForJinjaTemplateReady(t, name)
+
+	// Verify initial content
+	cm := waitForConfigMap(t, name)
+	if !strings.Contains(cm.Data["content"], "e2e-dyn-secret-alpha=alpha-tok") {
+		t.Fatalf("Expected initial content to contain e2e-dyn-secret-alpha, got:\n%s", cm.Data["content"])
+	}
+	t.Logf("Initial content:\n%s", cm.Data["content"])
+
+	// Add a new Secret matching the label selector
+	_, err = clientset.CoreV1().Secrets(testNamespace).Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "e2e-dyn-secret-beta",
+			Namespace: testNamespace,
+			Labels:    map[string]string{"e2e-dyn-type": "api-cred"},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{"token": []byte("beta-tok")},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("Failed to create dynamic Secret: %v", err)
+	}
+
+	// Wait for the output to include the new Secret
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		cm, err := clientset.CoreV1().ConfigMaps(testNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		return strings.Contains(cm.Data["content"], "e2e-dyn-secret-beta=beta-tok"), nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for dynamic secret label selector re-render: %v", err)
+	}
+
+	t.Log("Secret label selector dynamic match test passed")
+}
+
+// ---------------------------------------------------------------------------
+// Test: Label selector deletion triggers re-render
+// ---------------------------------------------------------------------------
+
+func TestLabelSelectorDeletionTriggersRerender(t *testing.T) {
+	const name = "e2e-labelselector-delete"
+	defer cleanupJinjaTemplate(t, name)
+	defer cleanupConfigMap(t, name)
+	defer cleanupConfigMap(t, "e2e-del-ep-one")
+	defer cleanupConfigMap(t, "e2e-del-ep-two")
+
+	ctx := context.Background()
+
+	// Create two labeled ConfigMaps
+	for _, ep := range []struct {
+		name string
+		data map[string]string
+	}{
+		{"e2e-del-ep-one", map[string]string{"val": "one"}},
+		{"e2e-del-ep-two", map[string]string{"val": "two"}},
+	} {
+		_, err := clientset.CoreV1().ConfigMaps(testNamespace).Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      ep.name,
+				Namespace: testNamespace,
+				Labels:    map[string]string{"e2e-del-group": "deletable"},
+			},
+			Data: ep.data,
+		}, metav1.CreateOptions{})
+		if err != nil {
+			t.Fatalf("Failed to create ConfigMap %s: %v", ep.name, err)
+		}
+	}
+
+	jt := newJinjaTemplateObj(name)
+	addSourceConfigMapLabelSelector(jt, "items", map[string]interface{}{"e2e-del-group": "deletable"})
+	setInlineTemplate(jt, "{% for item in items %}{{ item.name }}\n{% endfor %}")
+	setOutput(jt, "ConfigMap", "")
+
+	createJinjaTemplate(t, jt)
+	waitForJinjaTemplateReady(t, name)
+
+	// Verify both are in the output
+	cm := waitForConfigMap(t, name)
+	if !strings.Contains(cm.Data["content"], "e2e-del-ep-one") || !strings.Contains(cm.Data["content"], "e2e-del-ep-two") {
+		t.Fatalf("Expected both endpoints in content, got:\n%s", cm.Data["content"])
+	}
+
+	// Delete one ConfigMap
+	err := clientset.CoreV1().ConfigMaps(testNamespace).Delete(ctx, "e2e-del-ep-two", metav1.DeleteOptions{})
+	if err != nil {
+		t.Fatalf("Failed to delete ConfigMap: %v", err)
+	}
+
+	// Wait for the output to no longer contain the deleted ConfigMap
+	err = wait.PollUntilContextTimeout(ctx, pollInterval, pollTimeout, true, func(ctx context.Context) (bool, error) {
+		cm, err := clientset.CoreV1().ConfigMaps(testNamespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, nil
+		}
+		return !strings.Contains(cm.Data["content"], "e2e-del-ep-two") && strings.Contains(cm.Data["content"], "e2e-del-ep-one"), nil
+	})
+	if err != nil {
+		t.Fatalf("Timeout waiting for label selector deletion re-render: %v", err)
+	}
+
+	t.Log("Label selector deletion re-render test passed")
 }
