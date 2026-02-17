@@ -66,6 +66,13 @@ rules:
     verbs:
       - create
       - patch
+  - apiGroups:
+      - events.k8s.io
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
   {{- if .Values.leaderElection.enabled }}
   # Leader election
   - apiGroups:
