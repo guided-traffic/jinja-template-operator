@@ -121,6 +121,11 @@ func waitForCondition(ctx context.Context, c client.Client, key types.Namespaced
 
 // waitForConfigMapContent waits until a ConfigMap exists and its "content" key matches the expected string.
 func waitForConfigMapContent(ctx context.Context, c client.Client, key types.NamespacedName, expected string) (*corev1.ConfigMap, error) {
+	return waitForConfigMapKeyContent(ctx, c, key, "content", expected)
+}
+
+// waitForConfigMapKeyContent waits until a ConfigMap exists and a specific data key matches the expected string.
+func waitForConfigMapKeyContent(ctx context.Context, c client.Client, key types.NamespacedName, dataKey, expected string) (*corev1.ConfigMap, error) {
 	var cm corev1.ConfigMap
 	deadline := time.Now().Add(timeout)
 
@@ -130,7 +135,79 @@ func waitForConfigMapContent(ctx context.Context, c client.Client, key types.Nam
 			continue
 		}
 
-		if cm.Data["content"] == expected {
+		if cm.Data[dataKey] == expected {
+			return &cm, nil
+		}
+
+		time.Sleep(interval)
+	}
+
+	if err := c.Get(ctx, key, &cm); err != nil {
+		return nil, err
+	}
+	return &cm, nil
+}
+
+// waitForSecretKeyContent waits until a Secret exists and a specific data key matches the expected string.
+func waitForSecretKeyContent(ctx context.Context, c client.Client, key types.NamespacedName, dataKey, expected string) (*corev1.Secret, error) {
+	var secret corev1.Secret
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, &secret); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+
+		if string(secret.Data[dataKey]) == expected {
+			return &secret, nil
+		}
+
+		time.Sleep(interval)
+	}
+
+	if err := c.Get(ctx, key, &secret); err != nil {
+		return nil, err
+	}
+	return &secret, nil
+}
+
+// waitForConfigMapContentContains waits until a ConfigMap's "content" key contains the expected substring.
+func waitForConfigMapContentContains(ctx context.Context, c client.Client, key types.NamespacedName, substr string) (*corev1.ConfigMap, error) {
+	var cm corev1.ConfigMap
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, &cm); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+
+		if strings.Contains(cm.Data["content"], substr) {
+			return &cm, nil
+		}
+
+		time.Sleep(interval)
+	}
+
+	if err := c.Get(ctx, key, &cm); err != nil {
+		return nil, err
+	}
+	return &cm, nil
+}
+
+// waitForConfigMapContentNotContains waits until a ConfigMap's "content" key does NOT contain the given substring.
+func waitForConfigMapContentNotContains(ctx context.Context, c client.Client, key types.NamespacedName, substr string) (*corev1.ConfigMap, error) {
+	var cm corev1.ConfigMap
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, &cm); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+
+		if !strings.Contains(cm.Data["content"], substr) {
 			return &cm, nil
 		}
 
@@ -2070,4 +2147,469 @@ func TestOutputUpdate(t *testing.T) {
 			t.Errorf("expected Secret content to be updated, got: %q", string(outputSecret.Data["content"]))
 		}
 	})
+}
+
+// TestCustomOutputKey tests that the spec.output.key field controls the data key in the output resource.
+func TestCustomOutputKey(t *testing.T) {
+	tc := setupTestManager(t, nil)
+	ns := createNamespace(t, tc.client)
+	defer tc.cleanup(t, ns)
+
+	ctx := context.Background()
+
+	t.Run("ConfigMapCustomKey", func(t *testing.T) {
+		sourceCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "key-source",
+				Namespace: ns.Name,
+			},
+			Data: map[string]string{
+				"host": "app.example.com",
+			},
+		}
+		if err := tc.client.Create(ctx, sourceCM); err != nil {
+			t.Fatalf("failed to create source ConfigMap: %v", err)
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "custom-key-cm",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name: "host",
+						ConfigMap: &jtov1.ConfigMapSource{
+							Name: "key-source",
+							Key:  "host",
+						},
+					},
+				},
+				Template: "SERVER_HOST={{ host }}",
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+					Key:  "app.env",
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outputKey := types.NamespacedName{Name: "custom-key-cm", Namespace: ns.Name}
+		outputCM, err := waitForConfigMapKeyContent(ctx, tc.client, outputKey, "app.env", "SERVER_HOST=app.example.com")
+		if err != nil {
+			t.Fatalf("failed to get output ConfigMap: %v", err)
+		}
+
+		// Verify the custom key is used
+		if outputCM.Data["app.env"] != "SERVER_HOST=app.example.com" {
+			t.Errorf("expected data under key 'app.env', got data: %v", outputCM.Data)
+		}
+
+		// Verify the default key is NOT present
+		if _, hasDefault := outputCM.Data["content"]; hasDefault {
+			t.Error("expected 'content' key to NOT be present when custom key is set")
+		}
+	})
+
+	t.Run("SecretCustomKey", func(t *testing.T) {
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "custom-key-secret",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Template: "API_KEY=secret-value-42",
+				Output: jtov1.Output{
+					Kind: "Secret",
+					Name: "custom-key-secret-out",
+					Key:  "credentials.yaml",
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outputKey := types.NamespacedName{Name: "custom-key-secret-out", Namespace: ns.Name}
+		outputSecret, err := waitForSecretKeyContent(ctx, tc.client, outputKey, "credentials.yaml", "API_KEY=secret-value-42")
+		if err != nil {
+			t.Fatalf("failed to get output Secret: %v", err)
+		}
+
+		if string(outputSecret.Data["credentials.yaml"]) != "API_KEY=secret-value-42" {
+			t.Errorf("expected data under key 'credentials.yaml', got data keys: %v", outputSecret.Data)
+		}
+
+		if _, hasDefault := outputSecret.Data["content"]; hasDefault {
+			t.Error("expected 'content' key to NOT be present when custom key is set")
+		}
+	})
+}
+
+// TestLabelSelectorDynamicMatching tests that dynamically created/deleted resources
+// matching a label selector trigger re-reconciliation.
+func TestLabelSelectorDynamicMatching(t *testing.T) {
+	tc := setupTestManager(t, nil)
+	ns := createNamespace(t, tc.client)
+	defer tc.cleanup(t, ns)
+
+	ctx := context.Background()
+
+	t.Run("NewConfigMapMatchesSelectorTriggersRerender", func(t *testing.T) {
+		// Create initial labeled ConfigMap
+		cm1 := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dyn-endpoint-a",
+				Namespace: ns.Name,
+				Labels: map[string]string{
+					"category": "dynamic-ep",
+				},
+			},
+			Data: map[string]string{
+				"url": "https://alpha.example.com",
+			},
+		}
+		if err := tc.client.Create(ctx, cm1); err != nil {
+			t.Fatalf("failed to create initial ConfigMap: %v", err)
+		}
+
+		// Create JinjaTemplate with label selector
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dynamic-selector-test",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name: "eps",
+						ConfigMap: &jtov1.ConfigMapSource{
+							LabelSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"category": "dynamic-ep",
+								},
+							},
+						},
+					},
+				},
+				Template: "{% for ep in eps %}{{ ep.name }}\n{% endfor %}",
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		// Wait for initial output — should contain only dyn-endpoint-a
+		outputKey := types.NamespacedName{Name: "dynamic-selector-test", Namespace: ns.Name}
+		outputCM, err := waitForConfigMapContentContains(ctx, tc.client, outputKey, "dyn-endpoint-a")
+		if err != nil {
+			t.Fatalf("failed to get initial output: %v", err)
+		}
+		if strings.Contains(outputCM.Data["content"], "dyn-endpoint-b") {
+			t.Fatalf("initial output should NOT contain dyn-endpoint-b")
+		}
+
+		// Dynamically add a new matching ConfigMap
+		cm2 := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dyn-endpoint-b",
+				Namespace: ns.Name,
+				Labels: map[string]string{
+					"category": "dynamic-ep",
+				},
+			},
+			Data: map[string]string{
+				"url": "https://beta.example.com",
+			},
+		}
+		if err := tc.client.Create(ctx, cm2); err != nil {
+			t.Fatalf("failed to create dynamic ConfigMap: %v", err)
+		}
+
+		// Wait for output to include the new ConfigMap
+		outputCM, err = waitForConfigMapContentContains(ctx, tc.client, outputKey, "dyn-endpoint-b")
+		if err != nil {
+			t.Fatalf("failed to get updated output after dynamic add: %v", err)
+		}
+
+		content := outputCM.Data["content"]
+		if !strings.Contains(content, "dyn-endpoint-a") {
+			t.Errorf("output should still contain dyn-endpoint-a, got: %q", content)
+		}
+		if !strings.Contains(content, "dyn-endpoint-b") {
+			t.Errorf("output should now contain dyn-endpoint-b, got: %q", content)
+		}
+	})
+
+	t.Run("DeletedConfigMapTriggersRerender", func(t *testing.T) {
+		// Create two labeled ConfigMaps
+		for _, name := range []string{"del-ep-x", "del-ep-y"} {
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      name,
+					Namespace: ns.Name,
+					Labels: map[string]string{
+						"group": "del-test",
+					},
+				},
+				Data: map[string]string{
+					"val": name + "-value",
+				},
+			}
+			if err := tc.client.Create(ctx, cm); err != nil {
+				t.Fatalf("failed to create ConfigMap %s: %v", name, err)
+			}
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "del-selector-test",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name: "items",
+						ConfigMap: &jtov1.ConfigMapSource{
+							LabelSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"group": "del-test",
+								},
+							},
+						},
+					},
+				},
+				Template: "{% for item in items %}{{ item.name }}\n{% endfor %}",
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		// Wait for initial output containing both
+		outputKey := types.NamespacedName{Name: "del-selector-test", Namespace: ns.Name}
+		outputCM, err := waitForConfigMapContentContains(ctx, tc.client, outputKey, "del-ep-x")
+		if err != nil {
+			t.Fatalf("failed to get initial output: %v", err)
+		}
+		if !strings.Contains(outputCM.Data["content"], "del-ep-y") {
+			t.Fatalf("initial output should contain del-ep-y")
+		}
+
+		// Delete one of the ConfigMaps
+		cmToDelete := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "del-ep-y",
+				Namespace: ns.Name,
+			},
+		}
+		if err := tc.client.Delete(ctx, cmToDelete); err != nil {
+			t.Fatalf("failed to delete ConfigMap: %v", err)
+		}
+
+		// Wait for output to no longer contain the deleted ConfigMap
+		outputCM, err = waitForConfigMapContentNotContains(ctx, tc.client, outputKey, "del-ep-y")
+		if err != nil {
+			t.Fatalf("failed to get output after deletion: %v", err)
+		}
+
+		content := outputCM.Data["content"]
+		if !strings.Contains(content, "del-ep-x") {
+			t.Errorf("output should still contain del-ep-x, got: %q", content)
+		}
+		if strings.Contains(content, "del-ep-y") {
+			t.Errorf("output should NOT contain deleted del-ep-y, got: %q", content)
+		}
+	})
+
+	t.Run("NewSecretMatchesSelectorTriggersRerender", func(t *testing.T) {
+		// Create initial labeled Secret
+		s1 := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dyn-cred-a",
+				Namespace: ns.Name,
+				Labels: map[string]string{
+					"kind": "dynamic-cred",
+				},
+			},
+			Data: map[string][]byte{
+				"token": []byte("tok-alpha"),
+			},
+		}
+		if err := tc.client.Create(ctx, s1); err != nil {
+			t.Fatalf("failed to create initial Secret: %v", err)
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dyn-secret-selector",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name: "creds",
+						Secret: &jtov1.SecretSource{
+							LabelSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"kind": "dynamic-cred",
+								},
+							},
+						},
+					},
+				},
+				Template: "{% for c in creds %}{{ c.name }}={{ c.data.token }}\n{% endfor %}",
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outputKey := types.NamespacedName{Name: "dyn-secret-selector", Namespace: ns.Name}
+		outputCM, err := waitForConfigMapContentContains(ctx, tc.client, outputKey, "dyn-cred-a=tok-alpha")
+		if err != nil {
+			t.Fatalf("failed to get initial output: %v", err)
+		}
+		if strings.Contains(outputCM.Data["content"], "dyn-cred-b") {
+			t.Fatalf("initial output should NOT contain dyn-cred-b")
+		}
+
+		// Add a new Secret matching the selector
+		s2 := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "dyn-cred-b",
+				Namespace: ns.Name,
+				Labels: map[string]string{
+					"kind": "dynamic-cred",
+				},
+			},
+			Data: map[string][]byte{
+				"token": []byte("tok-beta"),
+			},
+		}
+		if err := tc.client.Create(ctx, s2); err != nil {
+			t.Fatalf("failed to create dynamic Secret: %v", err)
+		}
+
+		// Wait for output to include the new Secret
+		outputCM, err = waitForConfigMapContentContains(ctx, tc.client, outputKey, "dyn-cred-b=tok-beta")
+		if err != nil {
+			t.Fatalf("failed to get updated output after dynamic Secret add: %v", err)
+		}
+
+		content := outputCM.Data["content"]
+		if !strings.Contains(content, "dyn-cred-a=tok-alpha") {
+			t.Errorf("output should still contain dyn-cred-a, got: %q", content)
+		}
+	})
+}
+
+// TestTemplateFromConfigMapChangeTriggersRerender tests that changes to the templateFrom
+// ConfigMap trigger re-rendering with the updated template.
+func TestTemplateFromConfigMapChangeTriggersRerender(t *testing.T) {
+	tc := setupTestManager(t, nil)
+	ns := createNamespace(t, tc.client)
+	defer tc.cleanup(t, ns)
+
+	ctx := context.Background()
+
+	// Create source ConfigMap
+	sourceCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tpl-change-source",
+			Namespace: ns.Name,
+		},
+		Data: map[string]string{
+			"name": "myapp",
+		},
+	}
+	if err := tc.client.Create(ctx, sourceCM); err != nil {
+		t.Fatalf("failed to create source ConfigMap: %v", err)
+	}
+
+	// Create template ConfigMap with initial template
+	templateCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tpl-change-store",
+			Namespace: ns.Name,
+		},
+		Data: map[string]string{
+			"template.tpl": "APP_NAME={{ name }}",
+		},
+	}
+	if err := tc.client.Create(ctx, templateCM); err != nil {
+		t.Fatalf("failed to create template ConfigMap: %v", err)
+	}
+
+	// Create JinjaTemplate using templateFrom
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tpl-change-test",
+			Namespace: ns.Name,
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name: "name",
+					ConfigMap: &jtov1.ConfigMapSource{
+						Name: "tpl-change-source",
+						Key:  "name",
+					},
+				},
+			},
+			TemplateFrom: &jtov1.TemplateFrom{
+				ConfigMapRef: &jtov1.ConfigMapKeyRef{
+					Name: "tpl-change-store",
+					Key:  "template.tpl",
+				},
+			},
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+			},
+		},
+	}
+	if err := tc.client.Create(ctx, jt); err != nil {
+		t.Fatalf("failed to create JinjaTemplate: %v", err)
+	}
+
+	// Wait for initial output
+	outputKey := types.NamespacedName{Name: "tpl-change-test", Namespace: ns.Name}
+	outputCM, err := waitForConfigMapContent(ctx, tc.client, outputKey, "APP_NAME=myapp")
+	if err != nil {
+		t.Fatalf("failed to get initial output: %v", err)
+	}
+	if outputCM.Data["content"] != "APP_NAME=myapp" {
+		t.Fatalf("unexpected initial content: %q", outputCM.Data["content"])
+	}
+
+	// Update the template ConfigMap
+	tplCMKey := types.NamespacedName{Name: "tpl-change-store", Namespace: ns.Name}
+	if err := tc.client.Get(ctx, tplCMKey, templateCM); err != nil {
+		t.Fatalf("failed to re-fetch template ConfigMap: %v", err)
+	}
+	templateCM.Data["template.tpl"] = "APPLICATION={{ name | upper }}"
+	if err := tc.client.Update(ctx, templateCM); err != nil {
+		t.Fatalf("failed to update template ConfigMap: %v", err)
+	}
+
+	// Wait for re-rendered output with new template
+	outputCM, err = waitForConfigMapContent(ctx, tc.client, outputKey, "APPLICATION=MYAPP")
+	if err != nil {
+		t.Fatalf("failed to get re-rendered output: %v", err)
+	}
+	if outputCM.Data["content"] != "APPLICATION=MYAPP" {
+		t.Errorf("expected re-rendered content 'APPLICATION=MYAPP', got: %q", outputCM.Data["content"])
+	}
 }

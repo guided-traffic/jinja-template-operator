@@ -242,7 +242,7 @@ test/
 - [x] Set up watch on ConfigMaps with mapping to owning JinjaTemplates
 - [x] Set up watch on Secrets with mapping to owning JinjaTemplates
 - [x] Ensure label selector matches trigger reconciliation for new/deleted resources
-- [ ] Write integration tests (envtest) for watch behavior
+- [x] Write integration tests (envtest) for watch behavior
 
 ### Phase 7: Operator Configuration
 - [x] Implement global config struct (defaultOwnerReference, etc.)
@@ -263,15 +263,15 @@ test/
 - [x] Create `templates/deployment.yaml` for the operator
 - [x] Create `templates/serviceaccount.yaml`
 - [x] Create `templates/clusterrole.yaml` and `templates/clusterrolebinding.yaml`
-- [ ] Validate chart with `helm lint` and `helm template`
+- [x] Validate chart with `helm lint` and `helm template`
 
 ### Phase 10: Integration & E2E Tests
-- [ ] Write integration tests using envtest (create CR → verify output ConfigMap/Secret)
-- [ ] Write integration tests for source change → re-render
-- [ ] Write integration tests for label selector dynamic matching
-- [ ] Write integration tests for error handling (missing source, bad template)
+- [x] Write integration tests using envtest (create CR → verify output ConfigMap/Secret)
+- [x] Write integration tests for source change → re-render
+- [x] Write integration tests for label selector dynamic matching
+- [x] Write integration tests for error handling (missing source, bad template)
 - [x] Create E2E test helm-values.yaml
-- [ ] Write E2E tests against Kind cluster
+- [x] Write E2E tests against Kind cluster
 - [ ] Verify CI pipeline runs successfully
 
 ### Phase 11: Documentation & Cleanup
