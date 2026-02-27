@@ -284,7 +284,7 @@ jobs:
 
       - name: Upload ClamAV report
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: clamav-report
           path: clamav-report.txt
@@ -314,7 +314,7 @@ jobs:
         run: make test-unit-coverage
 
       - name: Upload unit coverage artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: unit-coverage
           path: coverage/unit.out
@@ -402,7 +402,7 @@ jobs:
         run: make test-integration-coverage
 
       - name: Upload integration coverage artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: integration-coverage
           path: coverage/integration.out
@@ -429,13 +429,13 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Download unit test coverage
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: unit-coverage
         continue-on-error: true
 
       - name: Download integration test coverage
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: integration-coverage
         continue-on-error: true
@@ -496,7 +496,7 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Upload combined coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-combined
           path: coverage/
@@ -536,7 +536,7 @@ jobs:
 
       - name: Upload coverage badge as artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-badge
           path: .github/badges/coverage.json
@@ -685,7 +685,7 @@ jobs:
 
       - name: Upload Trivy scan results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-container-report
           path: trivy-results.sarif
@@ -713,7 +713,7 @@ jobs:
           token: ${{ secrets.BOT_PAT }}
 
       - name: Download coverage badge
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: coverage-badge
           path: .github/badges/
