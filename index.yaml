@@ -2,8 +2,32 @@ apiVersion: v1
 entries:
   jinja-template-operator:
   - apiVersion: v2
+    appVersion: 1.3.9
+    created: "2026-03-08T04:12:08.26624997Z"
+    description: A Kubernetes operator that generates ConfigMaps and Secrets using
+      Jinja-like templates
+    digest: e84b1aa6eea911f4204cd3089fbbe156ca6f363f7a558b0517ad0175c402ec7d
+    home: https://github.com/guided-traffic/jinja-template-operator
+    keywords:
+    - kubernetes
+    - operator
+    - jinja
+    - template
+    - configmap
+    - secret
+    maintainers:
+    - name: Guided Traffic
+      url: https://github.com/guided-traffic
+    name: jinja-template-operator
+    sources:
+    - https://github.com/guided-traffic/jinja-template-operator
+    type: application
+    urls:
+    - https://guided-traffic.github.io/jinja-template-operator/jinja-template-operator-1.3.9.tgz
+    version: 1.3.9
+  - apiVersion: v2
     appVersion: 1.3.8
-    created: "2026-03-07T09:11:05.873139227Z"
+    created: "2026-03-08T04:12:08.26590093Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: ad9adec1c32a5c8f1f17af8328d315d841e4479aa62283631867128a68feba57
@@ -27,7 +51,7 @@ entries:
     version: 1.3.8
   - apiVersion: v2
     appVersion: 1.3.7
-    created: "2026-03-07T09:11:05.872561498Z"
+    created: "2026-03-08T04:12:08.265585063Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 9cc218a41f448908a34693fba9a67feabd3a2a7ed7c53fb863efdbee5d47316b
@@ -51,7 +75,7 @@ entries:
     version: 1.3.7
   - apiVersion: v2
     appVersion: 1.3.6
-    created: "2026-03-07T09:11:05.871978109Z"
+    created: "2026-03-08T04:12:08.26527702Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: ea1a138b56beaba0b89e6fdf1556d935c789d0a4815b0d0ca709924ca74332cc
@@ -75,7 +99,7 @@ entries:
     version: 1.3.6
   - apiVersion: v2
     appVersion: 1.3.5
-    created: "2026-03-07T09:11:05.871432391Z"
+    created: "2026-03-08T04:12:08.264954249Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 2b5e044af92c4006ffc67099d82ff0f250ed1f6e8c231cb5973e0e45b1325b7e
@@ -99,7 +123,7 @@ entries:
     version: 1.3.5
   - apiVersion: v2
     appVersion: 1.3.4
-    created: "2026-03-07T09:11:05.870898143Z"
+    created: "2026-03-08T04:12:08.264579931Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: afd66055dc1f896b77986e4b1c1083fd6c2f1ae89ef2e3636b04a17ef998b8cb
@@ -123,7 +147,7 @@ entries:
     version: 1.3.4
   - apiVersion: v2
     appVersion: 1.3.3
-    created: "2026-03-07T09:11:05.870414021Z"
+    created: "2026-03-08T04:12:08.264252944Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: e11f512cc7102c04130570d6d8b468e1f22a0c6130d315f46809d1fed51d7a7f
@@ -147,7 +171,7 @@ entries:
     version: 1.3.3
   - apiVersion: v2
     appVersion: 1.3.2
-    created: "2026-03-07T09:11:05.869952952Z"
+    created: "2026-03-08T04:12:08.263846064Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 6c37d29a9b5872956777538205151cdb83ce549709244939a1892a63f352bedf
@@ -171,7 +195,7 @@ entries:
     version: 1.3.2
   - apiVersion: v2
     appVersion: 1.3.1
-    created: "2026-03-07T09:11:05.869477105Z"
+    created: "2026-03-08T04:12:08.263272019Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: e121b985c896984dd2c4e0ae26c4f93c87eca54453eccc615dc3f034e38a1130
@@ -195,7 +219,7 @@ entries:
     version: 1.3.1
   - apiVersion: v2
     appVersion: 1.3.0
-    created: "2026-03-07T09:11:05.86900242Z"
+    created: "2026-03-08T04:12:08.262826074Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 70e4c7656fd0418a1165f8c18174d1efb47fd27e1bee19e252c5f06b241932ee
@@ -219,7 +243,7 @@ entries:
     version: 1.3.0
   - apiVersion: v2
     appVersion: 1.2.3
-    created: "2026-03-07T09:11:05.868508569Z"
+    created: "2026-03-08T04:12:08.262418174Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 69e7ee7765ee91bc4a195ffa30ca288d061fa9f3b463d446a9fa1d1b1cdde5d1
@@ -243,7 +267,7 @@ entries:
     version: 1.2.3
   - apiVersion: v2
     appVersion: 1.2.2
-    created: "2026-03-07T09:11:05.86794642Z"
+    created: "2026-03-08T04:12:08.261995735Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 13f67efe099f1eb72248bb52063d5e7203c03b68e2576fa42aada7e33001d976
@@ -267,7 +291,7 @@ entries:
     version: 1.2.2
   - apiVersion: v2
     appVersion: 1.2.1
-    created: "2026-03-07T09:11:05.867308869Z"
+    created: "2026-03-08T04:12:08.26158587Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 4ac3e6c8cb1c52d008ece9eb5e604744a509d38c003f30a7d072a8e784d3c7e0
@@ -291,7 +315,7 @@ entries:
     version: 1.2.1
   - apiVersion: v2
     appVersion: 1.2.0
-    created: "2026-03-07T09:11:05.866169552Z"
+    created: "2026-03-08T04:12:08.261188458Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 39c56117be2a614b5a8e202c057ee615620d5686918b467b332d7c448b3f1381
@@ -315,7 +339,7 @@ entries:
     version: 1.2.0
   - apiVersion: v2
     appVersion: 1.1.0
-    created: "2026-03-07T09:11:05.865309441Z"
+    created: "2026-03-08T04:12:08.260083367Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 76072b4b23fefff671a974e04695ac4bedbc207dce577b5f640d2c76cf9397fc
@@ -339,7 +363,7 @@ entries:
     version: 1.1.0
   - apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-03-07T09:11:05.864767499Z"
+    created: "2026-03-08T04:12:08.259639358Z"
     description: A Kubernetes operator that generates ConfigMaps and Secrets using
       Jinja-like templates
     digest: 1f9d8c23a70ed0b8739d0baf5fc3d8744009e350047cdaa062401864885ef1d4
@@ -361,4 +385,4 @@ entries:
     urls:
     - https://guided-traffic.github.io/jinja-template-operator/jinja-template-operator-1.0.0.tgz
     version: 1.0.0
-generated: "2026-03-07T09:11:05.863877703Z"
+generated: "2026-03-08T04:12:08.258933954Z"
