@@ -190,6 +190,15 @@
         "github-actions"
       ],
       "semanticCommitType": "chore"
+    },
+    {
+      "description": "semantic-release and all plugins: use 'chore' commit type",
+      "matchPackageNames": [
+        "semantic-release",
+        "/^@semantic-release//",
+        "conventional-changelog-conventionalcommits"
+      ],
+      "semanticCommitType": "chore"
     }
   ],
   "customManagers": [
