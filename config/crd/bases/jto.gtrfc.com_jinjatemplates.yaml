@@ -181,7 +181,45 @@ spec:
                       description: >-
                         Key is the data key in the output ConfigMap or Secret where
                         the rendered template content is stored. Defaults to "content".
+                        Ignored when keys is set.
                       type: string
+                    keys:
+                      description: >-
+                        Keys defines a list of individual key-template pairs to write
+                        into the output Secret or ConfigMap. When set, the top-level
+                        template/templateFrom fields and output.key are ignored. Each
+                        entry is rendered independently using the same sources context.
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - key
+                        properties:
+                          key:
+                            description: Key name in the output Secret or ConfigMap.
+                            type: string
+                          template:
+                            description: >-
+                              Inline Jinja template string for this key's value.
+                              The rendered value is trimmed of leading/trailing whitespace.
+                            type: string
+                          templateFrom:
+                            description: Reference to an external template for this key's value.
+                            type: object
+                            properties:
+                              configMapRef:
+                                description: ConfigMapRef references a ConfigMap containing the template.
+                                type: object
+                                required:
+                                  - name
+                                  - key
+                                properties:
+                                  name:
+                                    description: Name is the name of the ConfigMap.
+                                    type: string
+                                  key:
+                                    description: Key is the key in the ConfigMap containing the template.
+                                    type: string
                 setOwnerReference:
                   description: >-
                     SetOwnerReference controls whether the generated resource has

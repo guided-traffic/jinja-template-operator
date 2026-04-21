@@ -105,8 +105,33 @@ type Output struct {
 
 	// Key is the data key in the output ConfigMap or Secret where the rendered
 	// template content is stored. Defaults to "content" if omitted.
+	// Ignored when Keys is set.
 	// +optional
 	Key string `json:"key,omitempty"`
+
+	// Keys defines a list of individual key-template pairs to write into the
+	// output Secret or ConfigMap. When set, the top-level Template/TemplateFrom
+	// fields and Output.Key are ignored; each entry is rendered independently
+	// using the same sources context and the rendered value is trimmed of
+	// leading/trailing whitespace before being written.
+	// +optional
+	Keys []OutputKey `json:"keys,omitempty"`
+}
+
+// OutputKey defines a single key/value pair in a multi-key output.
+// Exactly one of Template or TemplateFrom must be provided.
+type OutputKey struct {
+	// Key is the data key in the output ConfigMap or Secret.
+	Key string `json:"key"`
+
+	// Template is an inline Jinja template string rendered as this key's value.
+	// +optional
+	Template string `json:"template,omitempty"`
+
+	// TemplateFrom references an external template stored in a ConfigMap for
+	// this key's value.
+	// +optional
+	TemplateFrom *TemplateFrom `json:"templateFrom,omitempty"`
 }
 
 // OutputRef stores a reference to a previously created output resource.

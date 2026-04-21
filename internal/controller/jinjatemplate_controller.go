@@ -4,6 +4,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -128,17 +129,17 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 		return fmt.Errorf("source resolution failed: %w", err)
 	}
 
-	// Load template
-	templateStr, err := r.loadTemplate(ctx, jt)
+	// Load templates (either the single legacy template or one per output key)
+	templates, err := r.loadTemplates(ctx, jt)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonTemplateLoadFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonTemplateLoadFailed, "Reconcile", "Template load failed: %v", err)
 		return fmt.Errorf("template load failed: %w", err)
 	}
 
-	// Render template
-	log.V(1).Info("Rendering template")
-	rendered, err := r.Renderer.Render(templateStr, templateContext)
+	// Render templates
+	log.V(1).Info("Rendering templates", "count", len(templates))
+	renderedData, err := r.renderTemplates(templates, templateContext)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonRenderFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonRenderFailed, "Reconcile", "Template rendering failed: %v", err)
@@ -157,7 +158,7 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 		// Continue anyway — creating the new output is more important
 	}
 
-	if err := r.createOrUpdateOutput(ctx, log, jt, outputName, rendered); err != nil {
+	if err := r.createOrUpdateOutput(ctx, log, jt, outputName, renderedData); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonOutputFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonOutputFailed, "Reconcile", "Output creation/update failed: %v", err)
 		return fmt.Errorf("output creation/update failed: %w", err)
@@ -179,6 +180,24 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 
 // validateSpec validates the JinjaTemplate spec.
 func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
+	if jt.Spec.Output.Kind != OutputKindConfigMap && jt.Spec.Output.Kind != OutputKindSecret {
+		return fmt.Errorf("spec.output.kind must be either 'ConfigMap' or 'Secret', got %q", jt.Spec.Output.Kind)
+	}
+
+	if len(jt.Spec.Output.Keys) > 0 {
+		if err := validateOutputKeys(jt.Spec.Output.Keys); err != nil {
+			return err
+		}
+	} else if err := validateTopLevelTemplate(jt); err != nil {
+		return err
+	}
+
+	return validateSources(jt.Spec.Sources)
+}
+
+// validateTopLevelTemplate enforces the legacy rule that exactly one of
+// spec.template or spec.templateFrom.configMapRef must be provided.
+func validateTopLevelTemplate(jt *jtov1.JinjaTemplate) error {
 	hasInline := jt.Spec.Template != ""
 	hasExternal := jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil
 
@@ -188,12 +207,12 @@ func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 	if hasInline && hasExternal {
 		return fmt.Errorf("only one of spec.template or spec.templateFrom.configMapRef can be provided")
 	}
+	return nil
+}
 
-	if jt.Spec.Output.Kind != OutputKindConfigMap && jt.Spec.Output.Kind != OutputKindSecret {
-		return fmt.Errorf("spec.output.kind must be either 'ConfigMap' or 'Secret', got %q", jt.Spec.Output.Kind)
-	}
-
-	for _, src := range jt.Spec.Sources {
+// validateSources validates the spec.sources entries.
+func validateSources(sources []jtov1.Source) error {
+	for _, src := range sources {
 		if src.Name == "" {
 			return fmt.Errorf("source name must not be empty")
 		}
@@ -204,7 +223,30 @@ func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 			return fmt.Errorf("source %q must specify either configMap or secret, not both", src.Name)
 		}
 	}
+	return nil
+}
 
+// validateOutputKeys validates the spec.output.keys entries.
+func validateOutputKeys(keys []jtov1.OutputKey) error {
+	seen := make(map[string]struct{}, len(keys))
+	for i, entry := range keys {
+		if entry.Key == "" {
+			return fmt.Errorf("spec.output.keys[%d].key must not be empty", i)
+		}
+		if _, dup := seen[entry.Key]; dup {
+			return fmt.Errorf("spec.output.keys[%d]: duplicate key %q", i, entry.Key)
+		}
+		seen[entry.Key] = struct{}{}
+
+		hasInline := entry.Template != ""
+		hasExternal := entry.TemplateFrom != nil && entry.TemplateFrom.ConfigMapRef != nil
+		if !hasInline && !hasExternal {
+			return fmt.Errorf("spec.output.keys[%d] (%q): either template or templateFrom.configMapRef must be provided", i, entry.Key)
+		}
+		if hasInline && hasExternal {
+			return fmt.Errorf("spec.output.keys[%d] (%q): only one of template or templateFrom.configMapRef can be provided", i, entry.Key)
+		}
+	}
 	return nil
 }
 
@@ -215,20 +257,84 @@ func (r *JinjaTemplateReconciler) loadTemplate(ctx context.Context, jt *jtov1.Ji
 	}
 
 	if jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil {
-		ref := jt.Spec.TemplateFrom.ConfigMapRef
-		cm := &corev1.ConfigMap{}
-		if err := r.Get(ctx, client.ObjectKey{Namespace: jt.Namespace, Name: ref.Name}, cm); err != nil {
-			return "", fmt.Errorf("failed to get template ConfigMap %s/%s: %w", jt.Namespace, ref.Name, err)
-		}
-
-		tplStr, ok := cm.Data[ref.Key]
-		if !ok {
-			return "", fmt.Errorf("key %q not found in template ConfigMap %s/%s", ref.Key, jt.Namespace, ref.Name)
-		}
-		return tplStr, nil
+		return r.loadTemplateFromConfigMap(ctx, jt.Namespace, jt.Spec.TemplateFrom.ConfigMapRef)
 	}
 
 	return "", fmt.Errorf("no template source configured")
+}
+
+// loadTemplateFromConfigMap fetches a template string from a ConfigMap key.
+func (r *JinjaTemplateReconciler) loadTemplateFromConfigMap(ctx context.Context, namespace string, ref *jtov1.ConfigMapKeyRef) (string, error) {
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, cm); err != nil {
+		return "", fmt.Errorf("failed to get template ConfigMap %s/%s: %w", namespace, ref.Name, err)
+	}
+
+	tplStr, ok := cm.Data[ref.Key]
+	if !ok {
+		return "", fmt.Errorf("key %q not found in template ConfigMap %s/%s", ref.Key, namespace, ref.Name)
+	}
+	return tplStr, nil
+}
+
+// loadedTemplate is a template resolved to a raw string, tagged with the
+// output data key it should populate and whether its rendered value should be
+// trimmed of surrounding whitespace (true for multi-key entries).
+type loadedTemplate struct {
+	key      string
+	template string
+	trim     bool
+}
+
+// loadTemplates resolves the templates to render: either a single legacy
+// template (output.keys empty) or one per output.keys entry.
+func (r *JinjaTemplateReconciler) loadTemplates(ctx context.Context, jt *jtov1.JinjaTemplate) ([]loadedTemplate, error) {
+	if len(jt.Spec.Output.Keys) > 0 {
+		out := make([]loadedTemplate, 0, len(jt.Spec.Output.Keys))
+		for _, entry := range jt.Spec.Output.Keys {
+			tplStr, err := r.loadOutputKeyTemplate(ctx, jt, entry)
+			if err != nil {
+				return nil, fmt.Errorf("output key %q: %w", entry.Key, err)
+			}
+			out = append(out, loadedTemplate{key: entry.Key, template: tplStr, trim: true})
+		}
+		return out, nil
+	}
+
+	tplStr, err := r.loadTemplate(ctx, jt)
+	if err != nil {
+		return nil, err
+	}
+	return []loadedTemplate{{key: outputKey(jt), template: tplStr, trim: false}}, nil
+}
+
+// loadOutputKeyTemplate resolves a single OutputKey entry's template source.
+func (r *JinjaTemplateReconciler) loadOutputKeyTemplate(ctx context.Context, jt *jtov1.JinjaTemplate, entry jtov1.OutputKey) (string, error) {
+	if entry.Template != "" {
+		return entry.Template, nil
+	}
+	if entry.TemplateFrom != nil && entry.TemplateFrom.ConfigMapRef != nil {
+		return r.loadTemplateFromConfigMap(ctx, jt.Namespace, entry.TemplateFrom.ConfigMapRef)
+	}
+	return "", fmt.Errorf("no template source configured")
+}
+
+// renderTemplates renders each loaded template with the given context, trimming
+// whitespace for multi-key entries. Returns a map of output data key to
+// rendered string value.
+func (r *JinjaTemplateReconciler) renderTemplates(templates []loadedTemplate, context map[string]interface{}) (map[string]string, error) {
+	result := make(map[string]string, len(templates))
+	for _, t := range templates {
+		rendered, err := r.Renderer.Render(t.template, context)
+		if err != nil {
+			return nil, fmt.Errorf("key %q: %w", t.key, err)
+		}
+		if t.trim {
+			rendered = strings.TrimSpace(rendered)
+		}
+		result[t.key] = rendered
+	}
+	return result, nil
 }
 
 // cleanupOldOutput deletes the previously created output resource if the output target
@@ -297,7 +403,8 @@ func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 	ctx context.Context,
 	log logr.Logger,
 	jt *jtov1.JinjaTemplate,
-	outputName, rendered string,
+	outputName string,
+	data map[string]string,
 ) error {
 	shouldSetOwner := r.Config.ShouldSetOwnerReference(jt.Spec.SetOwnerReference)
 
@@ -308,15 +415,15 @@ func (r *JinjaTemplateReconciler) createOrUpdateOutput(
 
 	switch jt.Spec.Output.Kind {
 	case OutputKindConfigMap:
-		return r.createOrUpdateConfigMap(ctx, log, jt, outputName, rendered, outputLabels, shouldSetOwner)
+		return r.createOrUpdateConfigMap(ctx, log, jt, outputName, data, outputLabels, shouldSetOwner)
 	case OutputKindSecret:
-		return r.createOrUpdateSecret(ctx, log, jt, outputName, rendered, outputLabels, shouldSetOwner)
+		return r.createOrUpdateSecret(ctx, log, jt, outputName, data, outputLabels, shouldSetOwner)
 	default:
 		return fmt.Errorf("unsupported output kind: %s", jt.Spec.Output.Kind)
 	}
 }
 
-// outputKey returns the data key for the rendered content.
+// outputKey returns the data key for the rendered content in single-key mode.
 // Defaults to "content" if not specified in the CR.
 func outputKey(jt *jtov1.JinjaTemplate) string {
 	if jt.Spec.Output.Key != "" {
@@ -325,12 +432,13 @@ func outputKey(jt *jtov1.JinjaTemplate) string {
 	return "content"
 }
 
-// createOrUpdateConfigMap creates or updates a ConfigMap with the rendered content.
+// createOrUpdateConfigMap creates or updates a ConfigMap with the rendered data.
 func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	ctx context.Context,
 	log logr.Logger,
 	jt *jtov1.JinjaTemplate,
-	name, rendered string,
+	name string,
+	data map[string]string,
 	outputLabels map[string]string,
 	shouldSetOwner bool,
 ) error {
@@ -343,9 +451,7 @@ func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, cm, func() error {
 		cm.Labels = mergeLabels(cm.Labels, outputLabels)
-		cm.Data = map[string]string{
-			outputKey(jt): rendered,
-		}
+		cm.Data = data
 
 		if shouldSetOwner {
 			return controllerutil.SetControllerReference(jt, cm, r.Scheme)
@@ -361,12 +467,13 @@ func (r *JinjaTemplateReconciler) createOrUpdateConfigMap(
 	return nil
 }
 
-// createOrUpdateSecret creates or updates a Secret with the rendered content.
+// createOrUpdateSecret creates or updates a Secret with the rendered data.
 func (r *JinjaTemplateReconciler) createOrUpdateSecret(
 	ctx context.Context,
 	log logr.Logger,
 	jt *jtov1.JinjaTemplate,
-	name, rendered string,
+	name string,
+	data map[string]string,
 	outputLabels map[string]string,
 	shouldSetOwner bool,
 ) error {
@@ -380,8 +487,9 @@ func (r *JinjaTemplateReconciler) createOrUpdateSecret(
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, secret, func() error {
 		secret.Labels = mergeLabels(secret.Labels, outputLabels)
 		secret.Type = corev1.SecretTypeOpaque
-		secret.Data = map[string][]byte{
-			outputKey(jt): []byte(rendered),
+		secret.Data = make(map[string][]byte, len(data))
+		for k, v := range data {
+			secret.Data[k] = []byte(v)
 		}
 
 		if shouldSetOwner {
@@ -517,27 +625,40 @@ func (r *JinjaTemplateReconciler) objectIsOutputOfJinjaTemplate(jt *jtov1.JinjaT
 
 // objectReferencedByJinjaTemplate checks if the given object is referenced by the JinjaTemplate.
 func (r *JinjaTemplateReconciler) objectReferencedByJinjaTemplate(jt *jtov1.JinjaTemplate, obj client.Object, kind string) bool {
-	// Check if the object is the template source ConfigMap
-	if kind == OutputKindConfigMap && jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil {
-		if jt.Spec.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
+	if kind == OutputKindConfigMap && r.templateConfigMapMatches(jt, obj) {
+		return true
+	}
+	return r.sourceConfigsMatch(jt.Spec.Sources, obj, kind)
+}
+
+// templateConfigMapMatches reports whether the object is the ConfigMap backing
+// either the top-level templateFrom or any output.keys[].templateFrom.
+func (r *JinjaTemplateReconciler) templateConfigMapMatches(jt *jtov1.JinjaTemplate, obj client.Object) bool {
+	if jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil &&
+		jt.Spec.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
+		return true
+	}
+	for _, entry := range jt.Spec.Output.Keys {
+		if entry.TemplateFrom != nil && entry.TemplateFrom.ConfigMapRef != nil &&
+			entry.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
 			return true
 		}
 	}
+	return false
+}
 
-	// Check sources
-	for _, src := range jt.Spec.Sources {
-		if kind == OutputKindConfigMap && src.ConfigMap != nil {
-			if r.sourceMatchesObject(src.ConfigMap.Name, src.ConfigMap.LabelSelector, obj) {
-				return true
-			}
+// sourceConfigsMatch reports whether any source references the given object.
+func (r *JinjaTemplateReconciler) sourceConfigsMatch(sources []jtov1.Source, obj client.Object, kind string) bool {
+	for _, src := range sources {
+		if kind == OutputKindConfigMap && src.ConfigMap != nil &&
+			r.sourceMatchesObject(src.ConfigMap.Name, src.ConfigMap.LabelSelector, obj) {
+			return true
 		}
-		if kind == OutputKindSecret && src.Secret != nil {
-			if r.sourceMatchesObject(src.Secret.Name, src.Secret.LabelSelector, obj) {
-				return true
-			}
+		if kind == OutputKindSecret && src.Secret != nil &&
+			r.sourceMatchesObject(src.Secret.Name, src.Secret.LabelSelector, obj) {
+			return true
 		}
 	}
-
 	return false
 }
 
