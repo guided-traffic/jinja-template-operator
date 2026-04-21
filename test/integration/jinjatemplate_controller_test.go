@@ -2613,3 +2613,445 @@ func TestTemplateFromConfigMapChangeTriggersRerender(t *testing.T) {
 		t.Errorf("expected re-rendered content 'APPLICATION=MYAPP', got: %q", outputCM.Data["content"])
 	}
 }
+
+// waitForSecretKeys waits until a Secret exists and every expected (key, value)
+// pair matches.
+func waitForSecretKeys(ctx context.Context, c client.Client, key types.NamespacedName, expected map[string]string) (*corev1.Secret, error) {
+	var secret corev1.Secret
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, &secret); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+		if secretMatchesAllKeys(&secret, expected) {
+			return &secret, nil
+		}
+		time.Sleep(interval)
+	}
+
+	if err := c.Get(ctx, key, &secret); err != nil {
+		return nil, err
+	}
+	return &secret, nil
+}
+
+func secretMatchesAllKeys(s *corev1.Secret, expected map[string]string) bool {
+	if len(s.Data) < len(expected) {
+		return false
+	}
+	for k, v := range expected {
+		if string(s.Data[k]) != v {
+			return false
+		}
+	}
+	return true
+}
+
+// waitForConfigMapKeys waits until a ConfigMap exists and every expected
+// (key, value) pair matches.
+func waitForConfigMapKeys(ctx context.Context, c client.Client, key types.NamespacedName, expected map[string]string) (*corev1.ConfigMap, error) {
+	var cm corev1.ConfigMap
+	deadline := time.Now().Add(timeout)
+
+	for time.Now().Before(deadline) {
+		if err := c.Get(ctx, key, &cm); err != nil {
+			time.Sleep(interval)
+			continue
+		}
+		if configMapMatchesAllKeys(&cm, expected) {
+			return &cm, nil
+		}
+		time.Sleep(interval)
+	}
+
+	if err := c.Get(ctx, key, &cm); err != nil {
+		return nil, err
+	}
+	return &cm, nil
+}
+
+func configMapMatchesAllKeys(cm *corev1.ConfigMap, expected map[string]string) bool {
+	if len(cm.Data) < len(expected) {
+		return false
+	}
+	for k, v := range expected {
+		if cm.Data[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// TestMultiKeyOutput exercises spec.output.keys end-to-end: multiple keys per
+// output, templateFrom references, whitespace trimming, removal of stale keys,
+// and rejection of invalid entries.
+func TestMultiKeyOutput(t *testing.T) {
+	tc := setupTestManager(t, nil)
+	ns := createNamespace(t, tc.client)
+	defer tc.cleanup(t, ns)
+
+	ctx := context.Background()
+
+	t.Run("SecretWithMultipleKeysAndTrim", func(t *testing.T) {
+		// Source Secret providing one variable.
+		sourceSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-db-user",
+				Namespace: ns.Name,
+			},
+			Data: map[string][]byte{
+				"password": []byte("p4ssw0rd!"),
+			},
+		}
+		if err := tc.client.Create(ctx, sourceSecret); err != nil {
+			t.Fatalf("failed to create source Secret: %v", err)
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-db-credentials",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name:   "db_password",
+						Secret: &jtov1.SecretSource{Name: "mk-db-user", Key: "password"},
+					},
+				},
+				Output: jtov1.Output{
+					Kind: "Secret",
+					Name: "mk-db-credentials",
+					Keys: []jtov1.OutputKey{
+						{Key: "DB_HOST", Template: "db-cluster-rw.example.svc.cluster.local"},
+						{Key: "DB_PORT", Template: "5432"},
+						{Key: "DB_NAME", Template: "myapp"},
+						// Multi-line block-scalar-style template with trailing newline —
+						// must be trimmed per spec.
+						{Key: "DB_PASSWORD", Template: "{{ db_password }}\n"},
+					},
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outKey := types.NamespacedName{Name: "mk-db-credentials", Namespace: ns.Name}
+		out, err := waitForSecretKeys(ctx, tc.client, outKey, map[string]string{
+			"DB_HOST":     "db-cluster-rw.example.svc.cluster.local",
+			"DB_PORT":     "5432",
+			"DB_NAME":     "myapp",
+			"DB_PASSWORD": "p4ssw0rd!",
+		})
+		if err != nil {
+			t.Fatalf("failed waiting for multi-key Secret: %v", err)
+		}
+		if len(out.Data) != 4 {
+			t.Errorf("expected 4 keys, got %d: %v", len(out.Data), keysOfSecret(out))
+		}
+		if _, ok := out.Data["content"]; ok {
+			t.Errorf("expected no legacy 'content' key on multi-key output")
+		}
+		if out.Labels[controller.LabelManagedBy] != controller.ManagerName {
+			t.Errorf("expected managed-by label on multi-key Secret")
+		}
+
+		// Ready condition must be True.
+		if _, err := waitForCondition(ctx, tc.client, outKey, controller.ConditionReady, metav1.ConditionTrue); err != nil {
+			t.Fatalf("expected Ready=True condition: %v", err)
+		}
+	})
+
+	t.Run("ConfigMapMixedSourcesAndTopLevelTemplateIgnored", func(t *testing.T) {
+		// Two source references — one ConfigMap, one Secret — fan out into a
+		// multi-key ConfigMap. A top-level Template is set deliberately to
+		// prove it is ignored when output.keys is present.
+		bucketCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-bucket-claim",
+				Namespace: ns.Name,
+			},
+			Data: map[string]string{
+				"BUCKET_NAME": "my-bucket",
+			},
+		}
+		if err := tc.client.Create(ctx, bucketCM); err != nil {
+			t.Fatalf("failed to create source ConfigMap: %v", err)
+		}
+
+		bucketSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-bucket-keys",
+				Namespace: ns.Name,
+			},
+			Data: map[string][]byte{
+				"AWS_ACCESS_KEY_ID":     []byte("AKIAEXAMPLE"),
+				"AWS_SECRET_ACCESS_KEY": []byte("s3cret-key"),
+			},
+		}
+		if err := tc.client.Create(ctx, bucketSecret); err != nil {
+			t.Fatalf("failed to create source Secret: %v", err)
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-storage",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				// Top-level template should be fully ignored.
+				Template: "IGNORED_TOP_LEVEL",
+				Sources: []jtov1.Source{
+					{
+						Name:      "BUCKET_NAME",
+						ConfigMap: &jtov1.ConfigMapSource{Name: "mk-bucket-claim", Key: "BUCKET_NAME"},
+					},
+					{
+						Name:   "ACCESS_KEY_ID",
+						Secret: &jtov1.SecretSource{Name: "mk-bucket-keys", Key: "AWS_ACCESS_KEY_ID"},
+					},
+					{
+						Name:   "SECRET_ACCESS_KEY",
+						Secret: &jtov1.SecretSource{Name: "mk-bucket-keys", Key: "AWS_SECRET_ACCESS_KEY"},
+					},
+				},
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+					Name: "mk-storage-config",
+					// output.key is also set to prove it is ignored.
+					Key: "legacy-key-to-ignore",
+					Keys: []jtov1.OutputKey{
+						{Key: "storage-bucket-name", Template: "{{ BUCKET_NAME }}"},
+						{Key: "storage-access-key-id", Template: "{{ ACCESS_KEY_ID }}"},
+						{Key: "storage-secret-access-key", Template: "{{ SECRET_ACCESS_KEY }}"},
+						{Key: "storage-endpoint", Template: "https://storage.example.com"},
+					},
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outKey := types.NamespacedName{Name: "mk-storage-config", Namespace: ns.Name}
+		out, err := waitForConfigMapKeys(ctx, tc.client, outKey, map[string]string{
+			"storage-bucket-name":       "my-bucket",
+			"storage-access-key-id":     "AKIAEXAMPLE",
+			"storage-secret-access-key": "s3cret-key",
+			"storage-endpoint":          "https://storage.example.com",
+		})
+		if err != nil {
+			t.Fatalf("failed waiting for multi-key ConfigMap: %v", err)
+		}
+		if len(out.Data) != 4 {
+			t.Errorf("expected exactly 4 keys, got %d: %v", len(out.Data), out.Data)
+		}
+		if _, ok := out.Data["content"]; ok {
+			t.Errorf("unexpected legacy 'content' key present: %q", out.Data["content"])
+		}
+		if _, ok := out.Data["legacy-key-to-ignore"]; ok {
+			t.Errorf("output.key must be ignored when output.keys is set")
+		}
+	})
+
+	t.Run("StaleKeyIsRemovedOnSpecUpdate", func(t *testing.T) {
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-prune",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+					Keys: []jtov1.OutputKey{
+						{Key: "keep", Template: "v1"},
+						{Key: "drop", Template: "v2"},
+					},
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outKey := types.NamespacedName{Name: "mk-prune", Namespace: ns.Name}
+		if _, err := waitForConfigMapKeys(ctx, tc.client, outKey, map[string]string{
+			"keep": "v1",
+			"drop": "v2",
+		}); err != nil {
+			t.Fatalf("initial multi-key output not ready: %v", err)
+		}
+
+		// Drop one key and mutate the remaining value.
+		jtKey := types.NamespacedName{Name: "mk-prune", Namespace: ns.Name}
+		if err := tc.client.Get(ctx, jtKey, jt); err != nil {
+			t.Fatalf("failed to refetch JT: %v", err)
+		}
+		jt.Spec.Output.Keys = []jtov1.OutputKey{{Key: "keep", Template: "v1-updated"}}
+		if err := tc.client.Update(ctx, jt); err != nil {
+			t.Fatalf("failed to update JT spec: %v", err)
+		}
+
+		// Wait until 'keep' has the new value AND 'drop' is gone.
+		deadline := time.Now().Add(timeout)
+		for time.Now().Before(deadline) {
+			var cm corev1.ConfigMap
+			if err := tc.client.Get(ctx, outKey, &cm); err == nil {
+				if cm.Data["keep"] == "v1-updated" {
+					if _, stillHas := cm.Data["drop"]; !stillHas {
+						return
+					}
+				}
+			}
+			time.Sleep(interval)
+		}
+		var cm corev1.ConfigMap
+		_ = tc.client.Get(ctx, outKey, &cm)
+		t.Fatalf("stale key was not pruned: %v", cm.Data)
+	})
+
+	t.Run("PerKeyTemplateFromConfigMap", func(t *testing.T) {
+		tplCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-tpl-lib",
+				Namespace: ns.Name,
+			},
+			Data: map[string]string{
+				"greeting.j2": "Hello {{ who }}",
+			},
+		}
+		if err := tc.client.Create(ctx, tplCM); err != nil {
+			t.Fatalf("failed to create template library: %v", err)
+		}
+
+		srcCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-src",
+				Namespace: ns.Name,
+			},
+			Data: map[string]string{
+				"who": "world",
+			},
+		}
+		if err := tc.client.Create(ctx, srcCM); err != nil {
+			t.Fatalf("failed to create source CM: %v", err)
+		}
+
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-templatefrom",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Sources: []jtov1.Source{
+					{
+						Name:      "who",
+						ConfigMap: &jtov1.ConfigMapSource{Name: "mk-src", Key: "who"},
+					},
+				},
+				Output: jtov1.Output{
+					Kind: "ConfigMap",
+					Keys: []jtov1.OutputKey{
+						{
+							Key: "message",
+							TemplateFrom: &jtov1.TemplateFrom{
+								ConfigMapRef: &jtov1.ConfigMapKeyRef{
+									Name: "mk-tpl-lib",
+									Key:  "greeting.j2",
+								},
+							},
+						},
+						{Key: "literal", Template: "static"},
+					},
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		outKey := types.NamespacedName{Name: "mk-templatefrom", Namespace: ns.Name}
+		if _, err := waitForConfigMapKeys(ctx, tc.client, outKey, map[string]string{
+			"message": "Hello world",
+			"literal": "static",
+		}); err != nil {
+			t.Fatalf("multi-key templateFrom output not ready: %v", err)
+		}
+
+		// Updating the referenced template ConfigMap should re-render the key.
+		var updatedTpl corev1.ConfigMap
+		if err := tc.client.Get(ctx, types.NamespacedName{Name: "mk-tpl-lib", Namespace: ns.Name}, &updatedTpl); err != nil {
+			t.Fatalf("failed to refetch tpl lib: %v", err)
+		}
+		updatedTpl.Data["greeting.j2"] = "Hi {{ who | upper }}"
+		if err := tc.client.Update(ctx, &updatedTpl); err != nil {
+			t.Fatalf("failed to update tpl lib: %v", err)
+		}
+
+		if _, err := waitForConfigMapKeys(ctx, tc.client, outKey, map[string]string{
+			"message": "Hi WORLD",
+			"literal": "static",
+		}); err != nil {
+			t.Fatalf("expected templateFrom update to re-render: %v", err)
+		}
+	})
+
+	t.Run("DuplicateKeyIsRejected", func(t *testing.T) {
+		jt := &jtov1.JinjaTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "mk-duplicate",
+				Namespace: ns.Name,
+			},
+			Spec: jtov1.JinjaTemplateSpec{
+				Output: jtov1.Output{
+					Kind: "Secret",
+					Keys: []jtov1.OutputKey{
+						{Key: "dup", Template: "a"},
+						{Key: "dup", Template: "b"},
+					},
+				},
+			},
+		}
+		if err := tc.client.Create(ctx, jt); err != nil {
+			t.Fatalf("failed to create JinjaTemplate: %v", err)
+		}
+
+		jtKey := types.NamespacedName{Name: "mk-duplicate", Namespace: ns.Name}
+		updated, err := waitForCondition(ctx, tc.client, jtKey, controller.ConditionReady, metav1.ConditionFalse)
+		if err != nil {
+			t.Fatalf("expected Ready=False condition: %v", err)
+		}
+
+		found := false
+		for _, c := range updated.Status.Conditions {
+			if c.Type == controller.ConditionReady && c.Status == metav1.ConditionFalse &&
+				c.Reason == controller.ReasonInvalidSpec && strings.Contains(c.Message, "duplicate key") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected InvalidSpec/duplicate-key condition, got: %+v", updated.Status.Conditions)
+		}
+
+		// No Secret should have been created.
+		var out corev1.Secret
+		err = tc.client.Get(ctx, jtKey, &out)
+		if err == nil {
+			t.Errorf("expected no output Secret to be created for invalid spec, got %v", out)
+		} else if !apierrors.IsNotFound(err) {
+			t.Errorf("unexpected error fetching output Secret: %v", err)
+		}
+	})
+}
+
+func keysOfSecret(s *corev1.Secret) []string {
+	out := make([]string, 0, len(s.Data))
+	for k := range s.Data {
+		out = append(out, k)
+	}
+	return out
+}

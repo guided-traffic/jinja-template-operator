@@ -1812,3 +1812,448 @@ func TestFindJinjaTemplatesDifferentNamespace(t *testing.T) {
 	requests := reconciler.findJinjaTemplatesForConfigMap(context.Background(), otherNsCM)
 	assert.Empty(t, requests)
 }
+
+// --- Multi-key output (spec.output.keys) ---
+
+func TestReconcileMultiKeySecret(t *testing.T) {
+	sourceSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-db-user",
+			Namespace: "default",
+		},
+		Data: map[string][]byte{
+			"password": []byte("p4ssw0rd"),
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-db-credentials",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:   "db_password",
+					Secret: &jtov1.SecretSource{Name: "my-db-user", Key: "password"},
+				},
+			},
+			Output: jtov1.Output{
+				Kind: "Secret",
+				Name: "my-db-credentials",
+				Keys: []jtov1.OutputKey{
+					{Key: "DB_HOST", Template: "db-cluster-rw.my-namespace.svc.cluster.local"},
+					{Key: "DB_PORT", Template: "5432"},
+					{Key: "DB_NAME", Template: "myapp"},
+					{Key: "DB_PASSWORD", Template: "\n{{ db_password }}\n"},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(sourceSecret, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "my-db-credentials", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	out := &corev1.Secret{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "my-db-credentials", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+
+	assert.Equal(t, "db-cluster-rw.my-namespace.svc.cluster.local", string(out.Data["DB_HOST"]))
+	assert.Equal(t, "5432", string(out.Data["DB_PORT"]))
+	assert.Equal(t, "myapp", string(out.Data["DB_NAME"]))
+	// Multi-line block should be trimmed of surrounding whitespace.
+	assert.Equal(t, "p4ssw0rd", string(out.Data["DB_PASSWORD"]))
+	// Output must contain exactly the declared keys — no legacy "content" key.
+	assert.NotContains(t, out.Data, "content")
+	assert.Len(t, out.Data, 4)
+}
+
+func TestReconcileMultiKeyConfigMap(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-bucket-claim",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"BUCKET_NAME": "my-bucket",
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-storage",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Sources: []jtov1.Source{
+				{
+					Name:      "BUCKET_NAME",
+					ConfigMap: &jtov1.ConfigMapSource{Name: "my-bucket-claim", Key: "BUCKET_NAME"},
+				},
+			},
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Keys: []jtov1.OutputKey{
+					{Key: "storage-bucket-name", Template: "{{ BUCKET_NAME }}"},
+					{Key: "storage-endpoint", Template: "https://storage.example.com"},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(cm, jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "my-storage", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	out := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "my-storage", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+
+	assert.Equal(t, "my-bucket", out.Data["storage-bucket-name"])
+	assert.Equal(t, "https://storage.example.com", out.Data["storage-endpoint"])
+	assert.Len(t, out.Data, 2)
+}
+
+func TestReconcileMultiKeyIgnoresTopLevelTemplate(t *testing.T) {
+	// When output.keys is set, top-level template and output.key must be ignored.
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multikey-ignores",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Template: "SHOULD_BE_IGNORED",
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Key:  "also-ignored",
+				Keys: []jtov1.OutputKey{
+					{Key: "only", Template: "real-value"},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "multikey-ignores", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	out := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "multikey-ignores", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]string{"only": "real-value"}, out.Data)
+	assert.NotContains(t, out.Data, "content")
+	assert.NotContains(t, out.Data, "also-ignored")
+}
+
+func TestReconcileMultiKeyFromConfigMapTemplate(t *testing.T) {
+	tplCM := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "tpl-lib",
+			Namespace: "default",
+		},
+		Data: map[string]string{
+			"greeting.j2": "Hello {{ name }}",
+		},
+	}
+
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multikey-templatefrom",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Template: "unused-top-level", // ignored once keys are set
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Keys: []jtov1.OutputKey{
+					{
+						Key: "GREETING",
+						TemplateFrom: &jtov1.TemplateFrom{
+							ConfigMapRef: &jtov1.ConfigMapKeyRef{
+								Name: "tpl-lib",
+								Key:  "greeting.j2",
+							},
+						},
+					},
+					{Key: "LITERAL", Template: "static"},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(tplCM, jt)
+
+	// The renderer will render `Hello ` since `name` is missing — Gonja treats
+	// undefined as empty. We only care that the templateFrom path is resolved.
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "multikey-templatefrom", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	out := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "multikey-templatefrom", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+	assert.Contains(t, out.Data["GREETING"], "Hello")
+	assert.Equal(t, "static", out.Data["LITERAL"])
+}
+
+func TestReconcileMultiKeyRemovesStaleKeys(t *testing.T) {
+	// First reconcile creates the multi-key output, then we reduce the key set
+	// and verify that the removed key disappears.
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prune-jt",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Keys: []jtov1.OutputKey{
+					{Key: "A", Template: "1"},
+					{Key: "B", Template: "2"},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "prune-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	out := &corev1.ConfigMap{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "prune-jt", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+	assert.Len(t, out.Data, 2)
+
+	// Drop key B.
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "prune-jt", Namespace: "default",
+	}, jt)
+	require.NoError(t, err)
+	jt.Spec.Output.Keys = []jtov1.OutputKey{{Key: "A", Template: "1-updated"}}
+	err = reconciler.Update(context.Background(), jt)
+	require.NoError(t, err)
+
+	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "prune-jt", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "prune-jt", Namespace: "default",
+	}, out)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"A": "1-updated"}, out.Data)
+}
+
+func TestValidateSpecMultiKey(t *testing.T) {
+	reconciler, _ := newTestReconciler()
+
+	tests := []struct {
+		name    string
+		jt      *jtov1.JinjaTemplate
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid keys only",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Output: jtov1.Output{
+						Kind: "Secret",
+						Keys: []jtov1.OutputKey{
+							{Key: "A", Template: "x"},
+							{Key: "B", Template: "y"},
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "keys coexist with top-level template (ignored, not an error)",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Template: "ignored",
+					Output: jtov1.Output{
+						Kind: "ConfigMap",
+						Keys: []jtov1.OutputKey{{Key: "A", Template: "x"}},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty key name",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Output: jtov1.Output{
+						Kind: "Secret",
+						Keys: []jtov1.OutputKey{{Key: "", Template: "x"}},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "must not be empty",
+		},
+		{
+			name: "duplicate keys",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Output: jtov1.Output{
+						Kind: "Secret",
+						Keys: []jtov1.OutputKey{
+							{Key: "dup", Template: "a"},
+							{Key: "dup", Template: "b"},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "duplicate key",
+		},
+		{
+			name: "entry without template or templateFrom",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Output: jtov1.Output{
+						Kind: "Secret",
+						Keys: []jtov1.OutputKey{{Key: "A"}},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "either template or templateFrom.configMapRef must be provided",
+		},
+		{
+			name: "entry with both template and templateFrom",
+			jt: &jtov1.JinjaTemplate{
+				Spec: jtov1.JinjaTemplateSpec{
+					Output: jtov1.Output{
+						Kind: "Secret",
+						Keys: []jtov1.OutputKey{
+							{
+								Key:      "A",
+								Template: "x",
+								TemplateFrom: &jtov1.TemplateFrom{
+									ConfigMapRef: &jtov1.ConfigMapKeyRef{Name: "cm", Key: "k"},
+								},
+							},
+						},
+					},
+				},
+			},
+			wantErr: true,
+			errMsg:  "only one of template or templateFrom.configMapRef",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := reconciler.validateSpec(tt.jt)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestFindJinjaTemplatesForOutputKeyTemplateFrom(t *testing.T) {
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "multikey-watcher",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Output: jtov1.Output{
+				Kind: "ConfigMap",
+				Keys: []jtov1.OutputKey{
+					{
+						Key: "from-cm",
+						TemplateFrom: &jtov1.TemplateFrom{
+							ConfigMapRef: &jtov1.ConfigMapKeyRef{Name: "key-template-cm", Key: "tpl"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	reconciler, _ := newTestReconciler(jt)
+
+	// ConfigMap referenced by an output key's templateFrom should trigger reconcile.
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "key-template-cm",
+			Namespace: "default",
+		},
+	}
+	requests := reconciler.findJinjaTemplatesForConfigMap(context.Background(), cm)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "multikey-watcher", requests[0].Name)
+}
+
+func TestReconcileMultiKeyInvalidEntryDoesNotCreateOutput(t *testing.T) {
+	jt := &jtov1.JinjaTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "bad-multikey",
+			Namespace: "default",
+		},
+		Spec: jtov1.JinjaTemplateSpec{
+			Output: jtov1.Output{
+				Kind: "Secret",
+				Keys: []jtov1.OutputKey{
+					{Key: "no_template"}, // neither Template nor TemplateFrom
+				},
+			},
+		},
+	}
+
+	reconciler, recorder := newTestReconciler(jt)
+
+	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{
+		NamespacedName: types.NamespacedName{Name: "bad-multikey", Namespace: "default"},
+	})
+	require.NoError(t, err)
+
+	// No Secret should have been created.
+	out := &corev1.Secret{}
+	err = reconciler.Get(context.Background(), types.NamespacedName{
+		Name: "bad-multikey", Namespace: "default",
+	}, out)
+	assert.True(t, apierrors.IsNotFound(err))
+
+	select {
+	case event := <-recorder.Events:
+		assert.Contains(t, event, ReasonInvalidSpec)
+	default:
+		t.Error("Expected an InvalidSpec event")
+	}
+}
