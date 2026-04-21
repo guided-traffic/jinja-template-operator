@@ -16,6 +16,7 @@ A Kubernetes Operator that generates **ConfigMaps** and **Secrets** using [Jinja
 - 🏷️ **Dynamic Label Selectors** — Automatically discovers new ConfigMaps/Secrets matching your selectors
 - 🔐 **ConfigMap or Secret Output** — Generate either a ConfigMap or Secret per template
 - 📝 **Inline & External Templates** — Define templates directly in the CR or reference an external ConfigMap
+- 🗝️ **Multi-Key Output** — Emit multiple independently-rendered keys in a single output ConfigMap/Secret
 - 🔗 **Configurable OwnerReference** — Control whether output resources are garbage-collected with the CR
 - 🌐 **Cluster-Scoped** — A single operator instance watches all namespaces
 
@@ -157,6 +158,54 @@ spec:
     key: nginx.conf
 ```
 
+### Example 4: Multi-Key Output
+
+Emit multiple keys into a single `Secret` (or `ConfigMap`), each rendered
+independently. Use this for credential bundles such as DB or object-storage
+secrets where each entry needs its own key.
+
+```yaml
+apiVersion: jto.gtrfc.com/v1
+kind: JinjaTemplate
+metadata:
+  name: my-db-credentials
+  namespace: my-app
+spec:
+  sources:
+    - name: db_password
+      secret:
+        name: my-db-user
+        key: password
+
+  output:
+    kind: Secret
+    name: my-db-credentials
+    keys:
+      - key: DB_HOST
+        template: "db-cluster-rw.my-namespace.svc.cluster.local"
+      - key: DB_PORT
+        template: "5432"
+      - key: DB_NAME
+        template: "myapp"
+      - key: DB_PASSWORD
+        template: |                    # multi-line block scalars are supported
+          {{ db_password }}
+```
+
+Notes:
+
+- Each entry in `output.keys` requires a `key` and exactly one of `template`
+  (inline) or `templateFrom.configMapRef` (external), mirroring the top-level
+  fields.
+- When `output.keys` is set, the top-level `spec.template` / `spec.templateFrom`
+  and `spec.output.key` are ignored.
+- Rendered values are trimmed of leading/trailing whitespace before being
+  written.
+- The output resource contains **exactly** the declared keys — any key
+  previously written by the operator that is no longer in `output.keys` is
+  removed on the next reconcile.
+- Existing `JinjaTemplates` without `output.keys` keep working unchanged.
+
 ## Spec Reference
 
 | Field | Type | Required | Description |
@@ -175,11 +224,20 @@ spec:
 | `spec.templateFrom.configMapRef.key` | `string` | No² | Key within the ConfigMap holding the template |
 | `spec.output.kind` | `string` | Yes | `ConfigMap` or `Secret` |
 | `spec.output.name` | `string` | No | Name of the generated resource (defaults to CR name) |
-| `spec.output.key` | `string` | No | Data key in the output ConfigMap/Secret (defaults to `content`) |
+| `spec.output.key` | `string` | No | Data key in the output ConfigMap/Secret (defaults to `content`). Ignored when `output.keys` is set. |
+| `spec.output.keys` | `[]OutputKey` | No³ | List of independently-rendered key/template pairs written into the output resource |
+| `spec.output.keys[].key` | `string` | Yes | Data key in the output ConfigMap/Secret |
+| `spec.output.keys[].template` | `string` | No⁴ | Inline Jinja template for this key's value (trimmed of surrounding whitespace) |
+| `spec.output.keys[].templateFrom.configMapRef.name` | `string` | No⁴ | ConfigMap containing the template for this key |
+| `spec.output.keys[].templateFrom.configMapRef.key` | `string` | No⁴ | Key within the ConfigMap holding the template for this key |
 
 > ¹ Each source must specify either `configMap` or `secret` (not both). Within each, use either `name`+`key` (direct reference) or `labelSelector` (list).
 >
-> ² Either `spec.template` (inline) or `spec.templateFrom` (external) must be provided.
+> ² Either `spec.template` (inline) or `spec.templateFrom` (external) must be provided — unless `spec.output.keys` is set, in which case both are ignored.
+>
+> ³ When `spec.output.keys` is set, the top-level `template`/`templateFrom` and `output.key` are ignored; the output resource contains exactly the declared keys.
+>
+> ⁴ Each entry in `output.keys` must provide exactly one of `template` (inline) or `templateFrom.configMapRef` (external).
 
 ## Template Context
 
