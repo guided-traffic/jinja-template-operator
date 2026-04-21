@@ -188,19 +188,31 @@ func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 		if err := validateOutputKeys(jt.Spec.Output.Keys); err != nil {
 			return err
 		}
-	} else {
-		hasInline := jt.Spec.Template != ""
-		hasExternal := jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil
-
-		if !hasInline && !hasExternal {
-			return fmt.Errorf("either spec.template or spec.templateFrom.configMapRef must be provided")
-		}
-		if hasInline && hasExternal {
-			return fmt.Errorf("only one of spec.template or spec.templateFrom.configMapRef can be provided")
-		}
+	} else if err := validateTopLevelTemplate(jt); err != nil {
+		return err
 	}
 
-	for _, src := range jt.Spec.Sources {
+	return validateSources(jt.Spec.Sources)
+}
+
+// validateTopLevelTemplate enforces the legacy rule that exactly one of
+// spec.template or spec.templateFrom.configMapRef must be provided.
+func validateTopLevelTemplate(jt *jtov1.JinjaTemplate) error {
+	hasInline := jt.Spec.Template != ""
+	hasExternal := jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil
+
+	if !hasInline && !hasExternal {
+		return fmt.Errorf("either spec.template or spec.templateFrom.configMapRef must be provided")
+	}
+	if hasInline && hasExternal {
+		return fmt.Errorf("only one of spec.template or spec.templateFrom.configMapRef can be provided")
+	}
+	return nil
+}
+
+// validateSources validates the spec.sources entries.
+func validateSources(sources []jtov1.Source) error {
+	for _, src := range sources {
 		if src.Name == "" {
 			return fmt.Errorf("source name must not be empty")
 		}
@@ -211,7 +223,6 @@ func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 			return fmt.Errorf("source %q must specify either configMap or secret, not both", src.Name)
 		}
 	}
-
 	return nil
 }
 
@@ -614,37 +625,40 @@ func (r *JinjaTemplateReconciler) objectIsOutputOfJinjaTemplate(jt *jtov1.JinjaT
 
 // objectReferencedByJinjaTemplate checks if the given object is referenced by the JinjaTemplate.
 func (r *JinjaTemplateReconciler) objectReferencedByJinjaTemplate(jt *jtov1.JinjaTemplate, obj client.Object, kind string) bool {
-	// Check if the object is the template source ConfigMap
-	if kind == OutputKindConfigMap && jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil {
-		if jt.Spec.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
+	if kind == OutputKindConfigMap && r.templateConfigMapMatches(jt, obj) {
+		return true
+	}
+	return r.sourceConfigsMatch(jt.Spec.Sources, obj, kind)
+}
+
+// templateConfigMapMatches reports whether the object is the ConfigMap backing
+// either the top-level templateFrom or any output.keys[].templateFrom.
+func (r *JinjaTemplateReconciler) templateConfigMapMatches(jt *jtov1.JinjaTemplate, obj client.Object) bool {
+	if jt.Spec.TemplateFrom != nil && jt.Spec.TemplateFrom.ConfigMapRef != nil &&
+		jt.Spec.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
+		return true
+	}
+	for _, entry := range jt.Spec.Output.Keys {
+		if entry.TemplateFrom != nil && entry.TemplateFrom.ConfigMapRef != nil &&
+			entry.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
 			return true
 		}
 	}
+	return false
+}
 
-	// Check per-output-key templateFrom references
-	if kind == OutputKindConfigMap {
-		for _, entry := range jt.Spec.Output.Keys {
-			if entry.TemplateFrom != nil && entry.TemplateFrom.ConfigMapRef != nil &&
-				entry.TemplateFrom.ConfigMapRef.Name == obj.GetName() {
-				return true
-			}
+// sourceConfigsMatch reports whether any source references the given object.
+func (r *JinjaTemplateReconciler) sourceConfigsMatch(sources []jtov1.Source, obj client.Object, kind string) bool {
+	for _, src := range sources {
+		if kind == OutputKindConfigMap && src.ConfigMap != nil &&
+			r.sourceMatchesObject(src.ConfigMap.Name, src.ConfigMap.LabelSelector, obj) {
+			return true
+		}
+		if kind == OutputKindSecret && src.Secret != nil &&
+			r.sourceMatchesObject(src.Secret.Name, src.Secret.LabelSelector, obj) {
+			return true
 		}
 	}
-
-	// Check sources
-	for _, src := range jt.Spec.Sources {
-		if kind == OutputKindConfigMap && src.ConfigMap != nil {
-			if r.sourceMatchesObject(src.ConfigMap.Name, src.ConfigMap.LabelSelector, obj) {
-				return true
-			}
-		}
-		if kind == OutputKindSecret && src.Secret != nil {
-			if r.sourceMatchesObject(src.Secret.Name, src.Secret.LabelSelector, obj) {
-				return true
-			}
-		}
-	}
-
 	return false
 }
 
