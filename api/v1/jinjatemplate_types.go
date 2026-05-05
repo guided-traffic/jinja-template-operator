@@ -179,7 +179,3 @@ type JinjaTemplateList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []JinjaTemplate `json:"items"`
 }
-
-func init() {
-	SchemeBuilder.Register(&JinjaTemplate{}, &JinjaTemplateList{})
-}
