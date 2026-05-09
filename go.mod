@@ -1,10 +1,10 @@
 module github.com/guided-traffic/jinja-template-operator
 
-go 1.26.2
+go 1.26.3
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/guided-traffic/gonja v1.0.25
+	github.com/guided-traffic/gonja v1.0.26
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.28.0
 	k8s.io/api v0.36.0
