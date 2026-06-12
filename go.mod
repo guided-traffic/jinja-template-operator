@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/guided-traffic/gonja v1.0.28
+	github.com/guided-traffic/gonja v1.0.29
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.28.0
 	k8s.io/api v0.36.1
