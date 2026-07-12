@@ -643,3 +643,74 @@ func TestResolveDirectConfigMapMissingName(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 }
+
+func TestResolveDNSSourceFromInjectedValues(t *testing.T) {
+	client := fake.NewClientBuilder().WithScheme(newScheme()).Build()
+	resolver := NewResolver(client)
+
+	srcs := []jtov1.Source{
+		{Name: "ips", DNS: &jtov1.DNSSource{Host: "app.example.com"}},
+	}
+	dnsValues := map[string][]string{"ips": {"10.0.0.1", "10.0.0.2"}}
+
+	result, err := resolver.Resolve(context.Background(), "default", srcs, dnsValues)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"10.0.0.1", "10.0.0.2"}, result["ips"])
+}
+
+func TestResolveDNSSourceWithoutInjectedValuesFails(t *testing.T) {
+	client := fake.NewClientBuilder().WithScheme(newScheme()).Build()
+	resolver := NewResolver(client)
+
+	srcs := []jtov1.Source{
+		{Name: "ips", DNS: &jtov1.DNSSource{Host: "app.example.com"}},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no resolved DNS values")
+}
+
+func TestResolveConfigMapInvalidLabelSelector(t *testing.T) {
+	client := fake.NewClientBuilder().WithScheme(newScheme()).Build()
+	resolver := NewResolver(client)
+
+	srcs := []jtov1.Source{
+		{
+			Name: "items",
+			ConfigMap: &jtov1.ConfigMapSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{Key: "type", Operator: "Bogus"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid label selector")
+}
+
+func TestResolveSecretInvalidLabelSelector(t *testing.T) {
+	client := fake.NewClientBuilder().WithScheme(newScheme()).Build()
+	resolver := NewResolver(client)
+
+	srcs := []jtov1.Source{
+		{
+			Name: "items",
+			Secret: &jtov1.SecretSource{
+				LabelSelector: &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{
+						{Key: "type", Operator: "Bogus"},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid label selector")
+}

@@ -255,3 +255,25 @@ func TestDNSRefreshIntervalFloorsAndFallsBack(t *testing.T) {
 	src.RefreshIntervalSeconds = int32Ptr(7)
 	assert.Equal(t, 7*time.Second, dnsRefreshInterval(src, 42*time.Second), "interval wins over TTL")
 }
+
+func TestLookuperDefaultsToMiekg(t *testing.T) {
+	reconciler, _ := newTestReconciler()
+	assert.Same(t, defaultDNSLookuper, reconciler.lookuper())
+
+	injected := &fakeLookuper{}
+	reconciler.DNSLookuper = injected
+	assert.Same(t, sources.DNSLookuper(injected), reconciler.lookuper())
+}
+
+func TestDNSRetryInterval(t *testing.T) {
+	assert.Equal(t, defaultDNSRetryInterval, dnsRetryInterval(&jtov1.DNSSource{}))
+	assert.Equal(t, 12*time.Second, dnsRetryInterval(&jtov1.DNSSource{RefreshIntervalSeconds: int32Ptr(12)}))
+}
+
+func TestMinNonZero(t *testing.T) {
+	assert.Equal(t, time.Duration(0), minNonZero(0, 0))
+	assert.Equal(t, 5*time.Second, minNonZero(0, 5*time.Second))
+	assert.Equal(t, 5*time.Second, minNonZero(5*time.Second, 0))
+	assert.Equal(t, 3*time.Second, minNonZero(3*time.Second, 5*time.Second))
+	assert.Equal(t, 3*time.Second, minNonZero(5*time.Second, 3*time.Second))
+}

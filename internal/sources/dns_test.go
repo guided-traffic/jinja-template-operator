@@ -3,6 +3,8 @@ package sources
 import (
 	"context"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -149,6 +151,83 @@ func TestServerAddrDefaultsPort(t *testing.T) {
 	assert.Equal(t, "10.96.0.10:5353", addr)
 }
 
+func TestServerAddrFromResolvConf(t *testing.T) {
+	confPath := filepath.Join(t.TempDir(), "resolv.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("nameserver 10.1.2.3\n"), 0o600))
+
+	l := &MiekgLookuper{resolvConfPath: confPath}
+	addr, err := l.serverAddr("")
+	require.NoError(t, err)
+	assert.Equal(t, "10.1.2.3:53", addr)
+}
+
+func TestServerAddrResolvConfMissing(t *testing.T) {
+	l := &MiekgLookuper{resolvConfPath: filepath.Join(t.TempDir(), "does-not-exist")}
+	_, err := l.serverAddr("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "system resolver config")
+}
+
+func TestServerAddrResolvConfWithoutNameserver(t *testing.T) {
+	confPath := filepath.Join(t.TempDir(), "resolv.conf")
+	require.NoError(t, os.WriteFile(confPath, []byte("search example.com\n"), 0o600))
+
+	l := &MiekgLookuper{resolvConfPath: confPath}
+	_, err := l.serverAddr("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no nameservers")
+}
+
+func TestLookupResolvConfErrorPropagates(t *testing.T) {
+	l := &MiekgLookuper{resolvConfPath: filepath.Join(t.TempDir(), "does-not-exist")}
+	_, err := l.Lookup(context.Background(), "app.example.com", RecordTypeA, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "system resolver config")
+}
+
+func TestLookupUnreachableServer(t *testing.T) {
+	// Grab a free UDP port and close it again: nothing listens there.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := pc.LocalAddr().String()
+	require.NoError(t, pc.Close())
+
+	_, err = NewMiekgLookuper().Lookup(context.Background(), "app.example.com", RecordTypeA, addr)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "query A app.example.com.")
+}
+
+func TestLookupTruncatedRetriesOverTCP(t *testing.T) {
+	// UDP and TCP server on the same port: UDP always answers truncated,
+	// TCP delivers the real answer.
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := tcpListener.Addr().String()
+
+	pc, err := net.ListenPacket("udp", addr)
+	require.NoError(t, err)
+
+	udpServer := &dns.Server{PacketConn: pc, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Truncated = true
+		_ = w.WriteMsg(resp)
+	})}
+	tcpServer := &dns.Server{Listener: tcpListener, Handler: staticHandler(map[string][]dns.RR{
+		"app.example.com.A": {rr(t, "app.example.com. 60 IN A 10.0.0.7")},
+	}, nil)}
+	go func() { _ = udpServer.ActivateAndServe() }()
+	go func() { _ = tcpServer.ActivateAndServe() }()
+	t.Cleanup(func() {
+		_ = udpServer.Shutdown()
+		_ = tcpServer.Shutdown()
+	})
+
+	res, err := NewMiekgLookuper().Lookup(context.Background(), "app.example.com", RecordTypeA, addr)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"10.0.0.7"}, res.IPs)
+}
+
 func TestMergeDNSRecordsAddsAndRefreshes(t *testing.T) {
 	now := metav1.Now()
 	earlier := metav1.NewTime(now.Add(-time.Minute))
@@ -206,4 +285,23 @@ func TestRecordValues(t *testing.T) {
 	}
 	assert.Equal(t, []string{"10.0.0.1", "10.0.0.2"}, RecordValues(records))
 	assert.Empty(t, RecordValues(nil))
+}
+
+func TestLookupTruncatedTCPRetryFails(t *testing.T) {
+	// UDP answers truncated, but nothing listens on TCP: the retry must fail.
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := pc.LocalAddr().String()
+
+	udpServer := &dns.Server{PacketConn: pc, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		resp.Truncated = true
+		_ = w.WriteMsg(resp)
+	})}
+	go func() { _ = udpServer.ActivateAndServe() }()
+	t.Cleanup(func() { _ = udpServer.Shutdown() })
+
+	_, err = NewMiekgLookuper().Lookup(context.Background(), "app.example.com", RecordTypeA, addr)
+	require.Error(t, err)
 }
