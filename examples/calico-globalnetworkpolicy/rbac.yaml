@@ -1,0 +1,32 @@
+# Grants the operator permission to manage Calico GlobalNetworkPolicies.
+# This is intentionally NOT part of the Helm chart: RawObject permissions
+# are granted explicitly, per kind, by the cluster administrator.
+#
+# Adjust the ServiceAccount name and namespace to match your Helm release.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jinja-template-operator-calico-gnp
+rules:
+  - apiGroups:
+      - crd.projectcalico.org
+    resources:
+      - globalnetworkpolicies
+    verbs:
+      - create
+      - delete
+      - get
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jinja-template-operator-calico-gnp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: jinja-template-operator-calico-gnp
+subjects:
+  - kind: ServiceAccount
+    name: jinja-template-operator
+    namespace: jinja-template-operator

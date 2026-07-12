@@ -222,13 +222,23 @@ spec:
                     - kind
                   properties:
                     kind:
-                      description: Kind is the kind of the output resource.
+                      description: >-
+                        Kind is the kind of the output resource. With "RawObject"
+                        the rendered template must be a complete Kubernetes manifest
+                        (single YAML document including apiVersion, kind and
+                        metadata.name); name, key and keys must not be set. RawObject
+                        outputs are subject to the operator's namespace-bound kind
+                        allowlist.
                       type: string
                       enum:
                         - ConfigMap
                         - Secret
+                        - RawObject
                     name:
-                      description: Name of the output resource. Defaults to the CR name.
+                      description: >-
+                        Name of the output resource. Defaults to the CR name.
+                        Must not be set for RawObject outputs (the name comes from
+                        the rendered manifest's metadata.name).
                       type: string
                     key:
                       description: >-
@@ -292,10 +302,24 @@ spec:
                     - name
                   properties:
                     kind:
-                      description: Kind of the output resource (ConfigMap or Secret).
+                      description: >-
+                        Kind of the output resource. For RawObject outputs this is
+                        the actual kind of the rendered manifest.
                       type: string
                     name:
                       description: Name of the output resource.
+                      type: string
+                    apiVersion:
+                      description: >-
+                        APIVersion of the output resource. Empty for ConfigMap/Secret
+                        outputs; set for RawObject outputs.
+                      type: string
+                    namespace:
+                      description: >-
+                        Namespace of the output resource. Set for namespaced RawObject
+                        outputs; empty for cluster-scoped RawObject outputs and for
+                        ConfigMap/Secret outputs (which always live in the CR's
+                        namespace).
                       type: string
                 dnsSources:
                   description: >-

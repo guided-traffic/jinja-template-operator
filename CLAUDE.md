@@ -51,9 +51,18 @@ Each source provides variables for the Jinja template context. Rules:
 
 ### Output (`spec.output`)
 
-- `spec.output.kind` (required): either `ConfigMap` or `Secret`.
-- `spec.output.name` (optional): name of the generated resource. Defaults to the CR's own name if omitted.
-- `spec.output.key` (optional): the data key in the output ConfigMap or Secret where the rendered content is stored. Defaults to `"content"` if omitted.
+- `spec.output.kind` (required): `ConfigMap`, `Secret` or `RawObject`.
+- `spec.output.name` (optional): name of the generated resource. Defaults to the CR's own name if omitted. Must not be set for `RawObject`.
+- `spec.output.key` (optional): the data key in the output ConfigMap or Secret where the rendered content is stored. Defaults to `"content"` if omitted. Must not be set for `RawObject`.
+
+### Raw Object Output (`spec.output.kind: RawObject`)
+
+- The rendered template must be a **single** YAML document forming a complete Kubernetes manifest (`apiVersion`, `kind`, `metadata.name`).
+- **Default deny:** the CR's namespace must be granted the rendered apiVersion/kind via the operator's namespace-bound allowlist (Helm value `operator.rawObjects.allowlist`, mounted as a config file, exact matching, no wildcards).
+- Namespaced kinds are written to the CR's own namespace only (cross-namespace targets are rejected) and use an OwnerReference for garbage collection.
+- Cluster-scoped kinds cannot carry a namespaced OwnerReference; the operator uses the finalizer `jto.gtrfc.com/raw-output-cleanup` on the CR and deletes the object itself on CR deletion (unless owner-reference semantics are disabled).
+- Objects are applied via server-side apply (field manager `jinja-template-operator`). Raw outputs are not watched for external changes.
+- RBAC for the target kinds is **not** part of the Helm chart; it is granted explicitly (see `examples/calico-globalnetworkpolicy/`).
 
 ### Owner Reference (`spec.setOwnerReference`)
 
@@ -146,6 +155,7 @@ Key Helm values:
 | Value | Description | Default |
 |-------|-------------|---------|
 | `operator.defaultOwnerReference` | Global default for OwnerReference on generated resources | `true` |
+| `operator.rawObjects.allowlist` | Namespace-bound allowlist for RawObject outputs (default deny) | `[]` |
 | `image.repository` | Container image repository | `guidedtraffic/jinja-template-operator` |
 | `image.tag` | Container image tag | `latest` |
 

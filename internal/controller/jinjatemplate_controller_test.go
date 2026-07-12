@@ -298,7 +298,7 @@ func TestValidateSpec(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "must be either 'ConfigMap' or 'Secret'",
+			errMsg:  "must be 'ConfigMap', 'Secret' or 'RawObject'",
 		},
 		{
 			name: "source without configMap or secret",

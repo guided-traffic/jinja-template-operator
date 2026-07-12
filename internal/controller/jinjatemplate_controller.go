@@ -99,6 +99,11 @@ func (r *JinjaTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("failed to get JinjaTemplate: %w", err)
 	}
 
+	// Handle CR deletion: clean up cluster-scoped raw outputs via finalizer
+	if !jt.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeRawOutput(ctx, log, jt)
+	}
+
 	// Reconcile and always update status at the end
 	result, reconcileErr := r.reconcile(ctx, log, jt)
 
@@ -160,10 +165,20 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 		return ctrl.Result{}, nil // Don't requeue on render errors
 	}
 
+	// Raw object outputs follow their own apply/cleanup path
+	if jt.Spec.Output.Kind == OutputKindRawObject {
+		return r.reconcileRawObjectOutput(ctx, log, jt, renderedData[outputKey(jt)], dnsRequeue)
+	}
+
 	// Create or update output resource
 	outputName := jt.Spec.Output.Name
 	if outputName == "" {
 		outputName = jt.Name
+	}
+
+	// Drop the raw-output finalizer if the CR switched away from RawObject
+	if err := r.reconcileRawOutputFinalizer(ctx, jt, false); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Clean up old output if the target changed (different name or kind)
@@ -194,8 +209,14 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 
 // validateSpec validates the JinjaTemplate spec.
 func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
-	if jt.Spec.Output.Kind != OutputKindConfigMap && jt.Spec.Output.Kind != OutputKindSecret {
-		return fmt.Errorf("spec.output.kind must be either 'ConfigMap' or 'Secret', got %q", jt.Spec.Output.Kind)
+	switch jt.Spec.Output.Kind {
+	case OutputKindConfigMap, OutputKindSecret:
+	case OutputKindRawObject:
+		if err := validateRawObjectOutputSpec(jt.Spec.Output); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("spec.output.kind must be 'ConfigMap', 'Secret' or 'RawObject', got %q", jt.Spec.Output.Kind)
 	}
 
 	if len(jt.Spec.Output.Keys) > 0 {
@@ -370,8 +391,9 @@ func (r *JinjaTemplateReconciler) cleanupOldOutput(
 		return nil // No previous output recorded
 	}
 
-	// Check if the target changed
-	if last.Kind == jt.Spec.Output.Kind && last.Name == currentOutputName {
+	// Check if the target changed. A last output with an apiVersion is a raw
+	// object, which never matches a ConfigMap/Secret target.
+	if last.APIVersion == "" && last.Kind == jt.Spec.Output.Kind && last.Name == currentOutputName {
 		return nil // Same target, nothing to clean up
 	}
 
@@ -380,7 +402,7 @@ func (r *JinjaTemplateReconciler) cleanupOldOutput(
 		"newKind", jt.Spec.Output.Kind, "newName", currentOutputName,
 	)
 
-	if err := r.deleteOldOutput(ctx, jt.Namespace, last.Kind, last.Name); err != nil {
+	if err := r.deleteLastOutput(ctx, jt, last); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.V(1).Info("Old output resource already deleted", "kind", last.Kind, "name", last.Name)
 			return nil

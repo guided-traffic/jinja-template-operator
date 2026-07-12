@@ -6,6 +6,22 @@ operator:
   # Individual CRs can override via spec.setOwnerReference.
   defaultOwnerReference: true
 
+  # RawObject output configuration.
+  rawObjects:
+    # Namespace-bound allowlist for RawObject outputs (default deny):
+    # a JinjaTemplate may only render RawObject outputs if its namespace is
+    # listed here, and only for the listed kinds. Namespace names and kinds
+    # are matched exactly (no wildcards).
+    #
+    # Note: the operator's ClusterRole does NOT include permissions for the
+    # allowed kinds. Grant them separately — see examples/calico-globalnetworkpolicy/.
+    allowlist: []
+    #  - namespaces:
+    #      - infra
+    #    kinds:
+    #      - apiVersion: crd.projectcalico.org/v1
+    #        kind: GlobalNetworkPolicy
+
 # Number of replicas
 replicaCount: 1
 
