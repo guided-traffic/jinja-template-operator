@@ -58,6 +58,17 @@ rules:
       - patch
       - update
       - watch
+  # ServiceAccount impersonation for RawObject outputs: the operator applies
+  # and deletes RawObject outputs as the ServiceAccount named in the CR
+  # (spec.output.serviceAccountName). "get" backs the fail-closed existence
+  # check. The same-namespace rule is enforced in the controller code.
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - impersonate
   # Event recording
   - apiGroups:
       - ""

@@ -140,12 +140,14 @@ func setupTestManager(t *testing.T, operatorConfig *config.OperatorConfig) *test
 	mgrClient := mgr.GetClient()
 
 	reconciler := &controller.JinjaTemplateReconciler{
-		Client:   mgrClient,
-		Scheme:   mgr.GetScheme(),
-		Config:   operatorConfig,
-		Recorder: mgr.GetEventRecorder("jinjatemplate-controller"),
-		Renderer: tmpl.NewRenderer(),
-		Resolver: sources.NewResolver(mgrClient),
+		Client:     mgrClient,
+		Scheme:     mgr.GetScheme(),
+		Config:     operatorConfig,
+		Recorder:   mgr.GetEventRecorder("jinjatemplate-controller"),
+		Renderer:   tmpl.NewRenderer(),
+		Resolver:   sources.NewResolver(mgrClient),
+		RestConfig: restConfig,
+		APIReader:  mgr.GetAPIReader(),
 	}
 
 	// Use unique controller name using atomic counter

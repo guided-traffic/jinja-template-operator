@@ -6,6 +6,26 @@ operator:
   # Individual CRs can override via spec.setOwnerReference.
   defaultOwnerReference: true
 
+  # RawObject output configuration.
+  #
+  # RawObject outputs are authorized via ServiceAccount impersonation: the
+  # operator applies and deletes the rendered object as the ServiceAccount
+  # named in spec.output.serviceAccountName (same namespace as the CR).
+  # Grant that ServiceAccount RBAC on the target kind — see
+  # examples/calico-globalnetworkpolicy/.
+  rawObjects:
+    # Optional ValidatingAdmissionPolicy guard: requires the author of a
+    # JinjaTemplate with a RawObject output to hold "impersonate" permission
+    # on the referenced ServiceAccount. Closes the confused-deputy gap where
+    # "create jinjatemplates" in a namespace implies using any ServiceAccount
+    # that exists there.
+    #
+    # Requires Kubernetes >= 1.30 (VAP GA incl. CEL authorizer). Default off:
+    # with GitOps controllers the author is the controller's identity, which
+    # would itself need impersonate permission on the ServiceAccounts.
+    authorCheck:
+      enabled: false
+
 # Number of replicas
 replicaCount: 1
 

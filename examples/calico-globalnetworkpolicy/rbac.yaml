@@ -1,0 +1,38 @@
+# The tenant ServiceAccount whose identity the operator impersonates when
+# applying the GlobalNetworkPolicy, plus the RBAC it needs on the target kind.
+# This is intentionally NOT part of the Helm chart: RawObject permissions are
+# granted explicitly, per kind, to a tenant ServiceAccount — never to the
+# operator itself.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gnp-applier
+  namespace: infra
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gnp-applier-calico-gnp
+rules:
+  - apiGroups:
+      - crd.projectcalico.org
+    resources:
+      - globalnetworkpolicies
+    verbs:
+      - create
+      - delete
+      - get
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gnp-applier-calico-gnp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gnp-applier-calico-gnp
+subjects:
+  - kind: ServiceAccount
+    name: gnp-applier
+    namespace: infra

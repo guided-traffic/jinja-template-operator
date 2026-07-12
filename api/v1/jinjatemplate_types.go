@@ -135,12 +135,26 @@ type ConfigMapKeyRef struct {
 
 // Output defines the target resource for the rendered template.
 type Output struct {
-	// Kind is the kind of the output resource: "ConfigMap" or "Secret".
-	// +kubebuilder:validation:Enum=ConfigMap;Secret
+	// Kind is the kind of the output resource: "ConfigMap", "Secret" or
+	// "RawObject". With "RawObject" the rendered template must be a complete
+	// Kubernetes manifest (single YAML document including apiVersion, kind and
+	// metadata.name); Name, Key and Keys must not be set and
+	// ServiceAccountName is required.
+	// +kubebuilder:validation:Enum=ConfigMap;Secret;RawObject
 	Kind string `json:"kind"`
+
+	// ServiceAccountName names the ServiceAccount in the CR's own namespace
+	// whose identity the operator impersonates when applying and deleting the
+	// RawObject output. Authorization is plain Kubernetes RBAC granted to that
+	// ServiceAccount (get/create/patch/delete on the target kind).
+	// Required for RawObject outputs; must not be set for ConfigMap/Secret.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 
 	// Name is the name of the output resource.
 	// Defaults to the JinjaTemplate CR name if omitted.
+	// Must not be set for RawObject outputs (the name comes from the rendered
+	// manifest's metadata.name).
 	// +optional
 	Name string `json:"name,omitempty"`
 
@@ -177,11 +191,30 @@ type OutputKey struct {
 
 // OutputRef stores a reference to a previously created output resource.
 type OutputRef struct {
-	// Kind is the kind of the output resource (ConfigMap or Secret).
+	// Kind is the kind of the output resource. For RawObject outputs this is
+	// the actual kind of the rendered manifest (e.g. GlobalNetworkPolicy).
 	Kind string `json:"kind"`
 
 	// Name is the name of the output resource.
 	Name string `json:"name"`
+
+	// APIVersion is the apiVersion of the output resource. Empty for
+	// ConfigMap/Secret outputs; set for RawObject outputs.
+	// +optional
+	APIVersion string `json:"apiVersion,omitempty"`
+
+	// Namespace is the namespace of the output resource. Set for namespaced
+	// RawObject outputs; empty for cluster-scoped RawObject outputs and for
+	// ConfigMap/Secret outputs (which always live in the CR's namespace).
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// ServiceAccountName is the ServiceAccount identity (in the CR's
+	// namespace) that created this output. Cleanup after a target or
+	// ServiceAccount change runs under this identity. Set for RawObject
+	// outputs only.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
 }
 
 // JinjaTemplateStatus defines the observed state of a JinjaTemplate.

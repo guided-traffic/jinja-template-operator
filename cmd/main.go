@@ -76,12 +76,14 @@ func main() {
 
 	// Set up the reconciler
 	reconciler := &controller.JinjaTemplateReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Config:   operatorConfig,
-		Recorder: mgr.GetEventRecorder("jinjatemplate-controller"),
-		Renderer: tmpl.NewRenderer(),
-		Resolver: sources.NewResolver(mgr.GetClient()),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Config:     operatorConfig,
+		Recorder:   mgr.GetEventRecorder("jinjatemplate-controller"),
+		Renderer:   tmpl.NewRenderer(),
+		Resolver:   sources.NewResolver(mgr.GetClient()),
+		RestConfig: mgr.GetConfig(),
+		APIReader:  mgr.GetAPIReader(),
 	}
 
 	if err := reconciler.SetupWithManager(mgr); err != nil {

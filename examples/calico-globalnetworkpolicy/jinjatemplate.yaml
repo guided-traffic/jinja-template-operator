@@ -1,0 +1,43 @@
+apiVersion: jto.gtrfc.com/v1
+kind: JinjaTemplate
+metadata:
+  name: hans-fischer-com-access
+  namespace: infra
+spec:
+  sources:
+    # Resolves to a sorted list of IPv4 addresses; the policy is re-rendered
+    # whenever the record changes (TTL-driven).
+    - name: api_ips
+      dns:
+        host: hans-fischer.com
+        recordType: A
+        # Keep IPs that briefly disappear from DNS responses for 10 minutes
+        # to avoid cutting connections during endpoint rotation.
+        removalGracePeriodSeconds: 600
+
+  template: |
+    apiVersion: crd.projectcalico.org/v1
+    kind: GlobalNetworkPolicy
+    metadata:
+      name: hans-fischer-com-access
+    spec:
+      selector: has(gnp/hans-fischer-com-access)
+      types:
+        - Egress
+      egress:
+        - action: Allow
+          protocol: TCP
+          destination:
+            nets:
+              {% for ip in api_ips %}
+              - {{ ip }}/32
+              {% endfor %}
+            ports:
+              - 443
+
+  output:
+    kind: RawObject
+    # The operator applies (and deletes) the policy as this ServiceAccount,
+    # which must exist in the CR's namespace and hold RBAC on the target kind
+    # (see rbac.yaml).
+    serviceAccountName: gnp-applier

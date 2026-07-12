@@ -15,6 +15,7 @@ A Kubernetes Operator that generates **ConfigMaps** and **Secrets** using [Jinja
 - 🔄 **Reactive Reconciliation** — Automatic re-rendering when source ConfigMaps/Secrets change or new matches appear
 - 🏷️ **Dynamic Label Selectors** — Automatically discovers new ConfigMaps/Secrets matching your selectors
 - 🔐 **ConfigMap or Secret Output** — Generate either a ConfigMap or Secret per template
+- 🧱 **Raw Object Output** — Render arbitrary Kubernetes manifests (e.g. Calico policies), applied via ServiceAccount impersonation and authorized by plain Kubernetes RBAC
 - 📝 **Inline & External Templates** — Define templates directly in the CR or reference an external ConfigMap
 - 🗝️ **Multi-Key Output** — Emit multiple independently-rendered keys in a single output ConfigMap/Secret
 - 🔗 **Configurable OwnerReference** — Control whether output resources are garbage-collected with the CR
@@ -37,6 +38,7 @@ helm install jinja-template-operator jinja-template-operator/jinja-template-oper
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `operator.defaultOwnerReference` | Global default for OwnerReference on generated resources | `true` |
+| `operator.rawObjects.authorCheck.enabled` | ValidatingAdmissionPolicy requiring JinjaTemplate authors to hold `impersonate` on the referenced ServiceAccount (needs K8s ≥ 1.30) | `false` |
 | `image.repository` | Container image repository | `guidedtraffic/jinja-template-operator` |
 | `image.tag` | Image tag (defaults to chart `appVersion`) | `""` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -206,6 +208,98 @@ Notes:
   removed on the next reconcile.
 - Existing `JinjaTemplates` without `output.keys` keep working unchanged.
 
+### Example 5: Raw Object Output
+
+With `output.kind: RawObject` the rendered template is applied as a complete
+Kubernetes manifest instead of being wrapped in a ConfigMap/Secret. This
+example keeps a Calico `GlobalNetworkPolicy` in sync with the IPs behind a DNS
+name (see [examples/calico-globalnetworkpolicy/](examples/calico-globalnetworkpolicy/)
+for the full walkthrough including RBAC):
+
+```yaml
+apiVersion: jto.gtrfc.com/v1
+kind: JinjaTemplate
+metadata:
+  name: hans-fischer-com-access
+  namespace: infra
+spec:
+  sources:
+    - name: api_ips
+      dns:
+        host: hans-fischer.com
+
+  template: |
+    apiVersion: crd.projectcalico.org/v1
+    kind: GlobalNetworkPolicy
+    metadata:
+      name: hans-fischer-com-access
+    spec:
+      selector: has(gnp/hans-fischer-com-access)
+      types:
+        - Egress
+      egress:
+        - action: Allow
+          protocol: TCP
+          destination:
+            nets:
+              {% for ip in api_ips %}
+              - {{ ip }}/32
+              {% endfor %}
+            ports:
+              - 443
+
+  output:
+    kind: RawObject
+    serviceAccountName: gnp-applier
+```
+
+Notes:
+
+- The rendered output must be a **single** YAML document with `apiVersion`,
+  `kind` and `metadata.name`. `output.name`, `output.key` and `output.keys`
+  must not be set.
+- **ServiceAccount impersonation:** `output.serviceAccountName` is required
+  and names a ServiceAccount in the CR's own namespace. The operator applies
+  and deletes the object **as that ServiceAccount**; authorization is plain
+  Kubernetes RBAC granted to it (`get`, `create`, `patch` for apply, plus
+  `delete` for cleanup and finalization). Neither the operator's ClusterRole
+  nor the Helm chart grants anything on the target kinds — see
+  [examples/calico-globalnetworkpolicy/rbac.yaml](examples/calico-globalnetworkpolicy/rbac.yaml).
+- Missing ServiceAccount ⇒ `Ready=False` with reason `ServiceAccountNotFound`;
+  missing RBAC ⇒ reason `OutputForbidden` with a `kubectl auth can-i`
+  remediation hint. Both retry with backoff, so granting the permission turns
+  the CR green without further action. Audit who may do what with standard
+  tooling: `kubectl auth can-i create <resource>.<group> --as=system:serviceaccount:<ns>:<sa>`.
+- Namespaced kinds are written to the CR's own namespace only and are
+  garbage-collected via OwnerReference. Cluster-scoped kinds (like
+  `GlobalNetworkPolicy`) cannot carry a namespaced OwnerReference; the
+  operator uses a finalizer on the CR and deletes the object itself — under
+  the ServiceAccount identity recorded in `status.lastOutput` — when the CR
+  is deleted (unless `setOwnerReference: false`). If the ServiceAccount or
+  its RBAC is gone at that point, the CR stays in Terminating; remedies:
+  restore the ServiceAccount, re-grant RBAC, or remove the finalizer
+  `jto.gtrfc.com/raw-output-cleanup` manually to abandon the output.
+- Raw outputs are not watched for external changes; they are re-applied on
+  the next reconcile (source change, DNS refresh or operator restart).
+
+Security model:
+
+- Anyone who may `create` JinjaTemplates in a namespace can use **any
+  ServiceAccount that exists in that namespace** as the apply identity.
+  Mitigations: control which ServiceAccounts exist per namespace, or enable
+  the optional admission guard (`operator.rawObjects.authorCheck.enabled`),
+  which requires the CR author to hold `impersonate` on the referenced
+  ServiceAccount (K8s ≥ 1.30; note that with GitOps controllers the "author"
+  is the controller's identity).
+- The operator checks the ServiceAccount's existence fail-closed before every
+  apply/delete, so deleting the ServiceAccount acts as a revocation. RBAC
+  bindings match the bare name string, though — delete the bindings too, or a
+  recreated ServiceAccount of the same name regains the permissions.
+- The operator itself holds `impersonate` on all ServiceAccounts
+  (cluster-wide). A compromised operator can therefore act as any
+  ServiceAccount in the cluster — the standard trade-off of the
+  impersonation pattern also used by Flux, kapp-controller and OLM.
+
 ## Spec Reference
 
 | Field | Type | Required | Description |
@@ -227,9 +321,10 @@ Notes:
 | `spec.template` | `string` | No² | Inline Jinja template |
 | `spec.templateFrom.configMapRef.name` | `string` | No² | ConfigMap containing the template |
 | `spec.templateFrom.configMapRef.key` | `string` | No² | Key within the ConfigMap holding the template |
-| `spec.output.kind` | `string` | Yes | `ConfigMap` or `Secret` |
-| `spec.output.name` | `string` | No | Name of the generated resource (defaults to CR name) |
-| `spec.output.key` | `string` | No | Data key in the output ConfigMap/Secret (defaults to `content`). Ignored when `output.keys` is set. |
+| `spec.output.kind` | `string` | Yes | `ConfigMap`, `Secret` or `RawObject` |
+| `spec.output.name` | `string` | No | Name of the generated resource (defaults to CR name). Must not be set for `RawObject` |
+| `spec.output.key` | `string` | No | Data key in the output ConfigMap/Secret (defaults to `content`). Ignored when `output.keys` is set. Must not be set for `RawObject` |
+| `spec.output.serviceAccountName` | `string` | For `RawObject` | ServiceAccount in the CR's namespace whose identity is impersonated for apply/delete of the raw output. Must not be set for `ConfigMap`/`Secret` |
 | `spec.output.keys` | `[]OutputKey` | No³ | List of independently-rendered key/template pairs written into the output resource |
 | `spec.output.keys[].key` | `string` | Yes | Data key in the output ConfigMap/Secret |
 | `spec.output.keys[].template` | `string` | No⁴ | Inline Jinja template for this key's value (trimmed of surrounding whitespace) |

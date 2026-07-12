@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -80,6 +81,21 @@ type JinjaTemplateReconciler struct {
 	Renderer *tmpl.Renderer
 	Resolver *sources.Resolver
 
+	// RestConfig is the operator's REST config. Impersonated per-reconcile
+	// clients for RawObject outputs are derived from it.
+	RestConfig *rest.Config
+
+	// APIReader reads uncached, straight from the API server. Used for the
+	// fail-closed ServiceAccount existence check: a cached read would require
+	// cluster-wide list/watch on serviceaccounts and could serve stale data
+	// right after a ServiceAccount was deleted.
+	APIReader client.Reader
+
+	// RawClientFactory overrides how impersonated clients are built.
+	// Injectable for unit tests, where a fake client cannot simulate
+	// impersonation. Defaults to a RestConfig-based impersonating client.
+	RawClientFactory func(namespace, serviceAccountName string) (client.Client, error)
+
 	// DNSLookuper resolves DNS sources. Defaults to a miekg/dns based
 	// implementation when nil; injectable for tests.
 	DNSLookuper sources.DNSLookuper
@@ -97,6 +113,11 @@ func (r *JinjaTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("failed to get JinjaTemplate: %w", err)
+	}
+
+	// Handle CR deletion: clean up cluster-scoped raw outputs via finalizer
+	if !jt.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, r.finalizeRawOutput(ctx, log, jt)
 	}
 
 	// Reconcile and always update status at the end
@@ -160,10 +181,20 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 		return ctrl.Result{}, nil // Don't requeue on render errors
 	}
 
+	// Raw object outputs follow their own apply/cleanup path
+	if jt.Spec.Output.Kind == OutputKindRawObject {
+		return r.reconcileRawObjectOutput(ctx, log, jt, renderedData[outputKey(jt)], dnsRequeue)
+	}
+
 	// Create or update output resource
 	outputName := jt.Spec.Output.Name
 	if outputName == "" {
 		outputName = jt.Name
+	}
+
+	// Drop the raw-output finalizer if the CR switched away from RawObject
+	if err := r.reconcileRawOutputFinalizer(ctx, jt, false); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	// Clean up old output if the target changed (different name or kind)
@@ -194,8 +225,17 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 
 // validateSpec validates the JinjaTemplate spec.
 func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
-	if jt.Spec.Output.Kind != OutputKindConfigMap && jt.Spec.Output.Kind != OutputKindSecret {
-		return fmt.Errorf("spec.output.kind must be either 'ConfigMap' or 'Secret', got %q", jt.Spec.Output.Kind)
+	switch jt.Spec.Output.Kind {
+	case OutputKindConfigMap, OutputKindSecret:
+		if jt.Spec.Output.ServiceAccountName != "" {
+			return fmt.Errorf("spec.output.serviceAccountName may only be set for RawObject outputs")
+		}
+	case OutputKindRawObject:
+		if err := validateRawObjectOutputSpec(jt.Spec.Output); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("spec.output.kind must be 'ConfigMap', 'Secret' or 'RawObject', got %q", jt.Spec.Output.Kind)
 	}
 
 	if len(jt.Spec.Output.Keys) > 0 {
@@ -370,8 +410,9 @@ func (r *JinjaTemplateReconciler) cleanupOldOutput(
 		return nil // No previous output recorded
 	}
 
-	// Check if the target changed
-	if last.Kind == jt.Spec.Output.Kind && last.Name == currentOutputName {
+	// Check if the target changed. A last output with an apiVersion is a raw
+	// object, which never matches a ConfigMap/Secret target.
+	if last.APIVersion == "" && last.Kind == jt.Spec.Output.Kind && last.Name == currentOutputName {
 		return nil // Same target, nothing to clean up
 	}
 
@@ -380,7 +421,7 @@ func (r *JinjaTemplateReconciler) cleanupOldOutput(
 		"newKind", jt.Spec.Output.Kind, "newName", currentOutputName,
 	)
 
-	if err := r.deleteOldOutput(ctx, jt.Namespace, last.Kind, last.Name); err != nil {
+	if err := r.deleteLastOutput(ctx, jt, last); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.V(1).Info("Old output resource already deleted", "kind", last.Kind, "name", last.Name)
 			return nil
