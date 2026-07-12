@@ -49,7 +49,7 @@ func TestResolveDirectConfigMap(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", sources)
+	result, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "db.example.com", result["db_host"])
 }
@@ -81,7 +81,7 @@ func TestResolveDirectSecret(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", sources)
+	result, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "s3cret", result["db_password"])
 }
@@ -143,7 +143,7 @@ func TestResolveConfigMapByLabelSelector(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", sources)
+	result, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	require.NoError(t, err)
 
 	endpoints, ok := result["endpoints"].([]map[string]interface{})
@@ -192,7 +192,7 @@ func TestResolveSecretByLabelSelector(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", sources)
+	result, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	require.NoError(t, err)
 
 	creds, ok := result["credentials"].([]map[string]interface{})
@@ -244,7 +244,7 @@ func TestResolveMultipleSources(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", sources)
+	result, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "app.example.com", result["host"])
 	assert.Equal(t, "key-123", result["api_key"])
@@ -266,7 +266,7 @@ func TestResolveMissingConfigMap(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", sources)
+	_, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to resolve source")
 }
@@ -298,7 +298,7 @@ func TestResolveMissingKey(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", sources)
+	_, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "key \"nonexistent_key\" not found")
 }
@@ -315,9 +315,9 @@ func TestResolveSourceWithNoReference(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", sources)
+	_, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "must specify either configMap or secret")
+	assert.Contains(t, err.Error(), "must specify configMap, secret or dns")
 }
 
 func TestResolveDirectConfigMapMissingNameOrKey(t *testing.T) {
@@ -337,7 +337,7 @@ func TestResolveDirectConfigMapMissingNameOrKey(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", sources)
+	_, err := resolver.Resolve(context.Background(), "default", sources, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 }
@@ -359,7 +359,7 @@ func TestResolveDirectSecretMissingNameOrKey(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 
@@ -373,7 +373,7 @@ func TestResolveDirectSecretMissingNameOrKey(t *testing.T) {
 		},
 	}
 
-	_, err = resolver.Resolve(context.Background(), "default", srcs)
+	_, err = resolver.Resolve(context.Background(), "default", srcs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 }
@@ -405,7 +405,7 @@ func TestResolveDirectSecretMissingKey(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "key \"nonexistent_key\" not found")
 }
@@ -426,7 +426,7 @@ func TestResolveMissingSecret(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to resolve source")
 	assert.Contains(t, err.Error(), "failed to get Secret")
@@ -451,7 +451,7 @@ func TestResolveConfigMapByLabelSelectorEmpty(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	result, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	require.NoError(t, err)
 
 	endpoints, ok := result["empty_result"].([]map[string]interface{})
@@ -478,7 +478,7 @@ func TestResolveSecretByLabelSelectorEmpty(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	result, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	require.NoError(t, err)
 
 	secrets, ok := result["empty_secrets"].([]map[string]interface{})
@@ -525,7 +525,7 @@ func TestResolveSecretByLabelSelectorMultiple(t *testing.T) {
 		},
 	}
 
-	result, err := resolver.Resolve(context.Background(), "default", srcs)
+	result, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	require.NoError(t, err)
 
 	creds, ok := result["creds"].([]map[string]interface{})
@@ -547,7 +547,7 @@ func TestResolveEmptySources(t *testing.T) {
 
 	resolver := NewResolver(client)
 
-	result, err := resolver.Resolve(context.Background(), "default", nil)
+	result, err := resolver.Resolve(context.Background(), "default", nil, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Empty(t, result)
@@ -639,7 +639,7 @@ func TestResolveDirectConfigMapMissingName(t *testing.T) {
 		},
 	}
 
-	_, err := resolver.Resolve(context.Background(), "default", srcs)
+	_, err := resolver.Resolve(context.Background(), "default", srcs, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "requires both name and key")
 }

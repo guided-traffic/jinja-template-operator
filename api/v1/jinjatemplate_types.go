@@ -31,7 +31,7 @@ type JinjaTemplateSpec struct {
 
 // Source defines a single variable source for the template context.
 // Each source has a unique name that becomes the variable name in the template.
-// Either ConfigMap or Secret must be specified (never both).
+// Exactly one of ConfigMap, Secret or DNS must be specified.
 type Source struct {
 	// Name is the variable name used in the template.
 	Name string `json:"name"`
@@ -43,6 +43,47 @@ type Source struct {
 	// Secret references a Secret as the source.
 	// +optional
 	Secret *SecretSource `json:"secret,omitempty"`
+
+	// DNS resolves DNS records as the source.
+	// +optional
+	DNS *DNSSource `json:"dns,omitempty"`
+}
+
+// DNSSource defines a DNS lookup as a variable source.
+// The lookup result is always a sorted list of IP address strings.
+// CNAME chains are followed recursively (max 10 hops) until IP records are reached.
+type DNSSource struct {
+	// Host is the DNS name to resolve.
+	Host string `json:"host"`
+
+	// RecordType is the address record type to query: "A", "AAAA" or "A+AAAA"
+	// (both families combined). CNAME chains are followed transparently; the
+	// result contains only IP addresses.
+	// +kubebuilder:validation:Enum=A;AAAA;A+AAAA
+	// +kubebuilder:default=A
+	// +optional
+	RecordType string `json:"recordType,omitempty"`
+
+	// RefreshIntervalSeconds forces re-resolution after a fixed interval.
+	// If omitted, the record's TTL drives the refresh.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RefreshIntervalSeconds *int32 `json:"refreshIntervalSeconds,omitempty"`
+
+	// Nameserver is an optional DNS server ("host" or "host:port", port
+	// defaults to 53), also used for every hop of a CNAME chain. If omitted,
+	// the system default resolver is used.
+	// +optional
+	Nameserver string `json:"nameserver,omitempty"`
+
+	// RemovalGracePeriodSeconds keeps a record in the rendered list for this
+	// long after it stops appearing in successful lookup responses (including
+	// NXDOMAIN, which counts as an empty response). 0 or omitted means
+	// immediate removal. Failed lookups (timeout, SERVFAIL) do not age
+	// records; the last known state stays valid.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	RemovalGracePeriodSeconds *int32 `json:"removalGracePeriodSeconds,omitempty"`
 }
 
 // ConfigMapSource defines how to resolve a ConfigMap source.
@@ -153,6 +194,40 @@ type JinjaTemplateStatus struct {
 	// Used to detect output target changes and clean up the old resource.
 	// +optional
 	LastOutput *OutputRef `json:"lastOutput,omitempty"`
+
+	// DNSSources tracks the resolved state of each DNS source, keyed by
+	// source name. Persists last known records across lookups and operator
+	// restarts; drives stale-on-error behavior and removal grace periods.
+	// +optional
+	DNSSources []DNSSourceStatus `json:"dnsSources,omitempty"`
+}
+
+// DNSSourceStatus records the resolved state of a single DNS source.
+type DNSSourceStatus struct {
+	// Name is the source name from spec.sources.
+	Name string `json:"name"`
+
+	// Records are the currently effective records, including those held
+	// through a removal grace period.
+	// +optional
+	Records []DNSRecord `json:"records,omitempty"`
+
+	// LastSuccessfulLookup is the time of the last successful DNS query.
+	// +optional
+	LastSuccessfulLookup *metav1.Time `json:"lastSuccessfulLookup,omitempty"`
+
+	// LastError is the error of the most recent failed lookup, empty on success.
+	// +optional
+	LastError string `json:"lastError,omitempty"`
+}
+
+// DNSRecord is one resolved value with bookkeeping for grace-period removal.
+type DNSRecord struct {
+	// Value is the resolved IP address.
+	Value string `json:"value"`
+
+	// LastSeen is the last time this value appeared in a lookup response.
+	LastSeen metav1.Time `json:"lastSeen"`
 }
 
 // +kubebuilder:object:root=true

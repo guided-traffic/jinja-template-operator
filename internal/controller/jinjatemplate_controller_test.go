@@ -312,7 +312,7 @@ func TestValidateSpec(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "must specify either configMap or secret",
+			errMsg:  "must specify exactly one of configMap, secret or dns",
 		},
 		{
 			name: "source with both configMap and secret",
@@ -330,7 +330,7 @@ func TestValidateSpec(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  "not both",
+			errMsg:  "exactly one of",
 		},
 	}
 

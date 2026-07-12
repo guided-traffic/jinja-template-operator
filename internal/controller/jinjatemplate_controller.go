@@ -79,6 +79,10 @@ type JinjaTemplateReconciler struct {
 	Recorder events.EventRecorder
 	Renderer *tmpl.Renderer
 	Resolver *sources.Resolver
+
+	// DNSLookuper resolves DNS sources. Defaults to a miekg/dns based
+	// implementation when nil; injectable for tests.
+	DNSLookuper sources.DNSLookuper
 }
 
 // Reconcile handles a single reconciliation for a JinjaTemplate CR.
@@ -96,7 +100,7 @@ func (r *JinjaTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Reconcile and always update status at the end
-	reconcileErr := r.reconcile(ctx, log, jt)
+	result, reconcileErr := r.reconcile(ctx, log, jt)
 
 	// Update status
 	if err := r.Status().Update(ctx, jt); err != nil {
@@ -108,25 +112,35 @@ func (r *JinjaTemplateReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, reconcileErr
+	return result, reconcileErr
 }
 
-// reconcile performs the core reconciliation logic.
-func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger, jt *jtov1.JinjaTemplate) error {
+// reconcile performs the core reconciliation logic. The returned result
+// carries the RequeueAfter for TTL/interval-driven DNS source refreshes.
+func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger, jt *jtov1.JinjaTemplate) (ctrl.Result, error) {
 	// Validate spec
 	if err := r.validateSpec(jt); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonInvalidSpec, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonInvalidSpec, "Reconcile", "Invalid spec: %v", err)
-		return nil // Don't requeue on validation errors
+		return ctrl.Result{}, nil // Don't requeue on validation errors
+	}
+
+	// Resolve DNS sources first: they are stateful (status-backed grace
+	// periods and stale-on-error) and drive the requeue interval.
+	dnsValues, dnsRequeue, err := r.resolveDNSSources(ctx, log, jt)
+	if err != nil {
+		r.setCondition(jt, metav1.ConditionFalse, ReasonDNSLookupFailed, err.Error())
+		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonDNSLookupFailed, "Reconcile", "DNS lookup failed: %v", err)
+		return ctrl.Result{}, fmt.Errorf("dns lookup failed: %w", err)
 	}
 
 	// Resolve sources
 	log.V(1).Info("Resolving sources", "count", len(jt.Spec.Sources))
-	templateContext, err := r.Resolver.Resolve(ctx, jt.Namespace, jt.Spec.Sources)
+	templateContext, err := r.Resolver.Resolve(ctx, jt.Namespace, jt.Spec.Sources, dnsValues)
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonSourceResolutionFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonSourceResolutionFailed, "Reconcile", "Source resolution failed: %v", err)
-		return fmt.Errorf("source resolution failed: %w", err)
+		return ctrl.Result{}, fmt.Errorf("source resolution failed: %w", err)
 	}
 
 	// Load templates (either the single legacy template or one per output key)
@@ -134,7 +148,7 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonTemplateLoadFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonTemplateLoadFailed, "Reconcile", "Template load failed: %v", err)
-		return fmt.Errorf("template load failed: %w", err)
+		return ctrl.Result{}, fmt.Errorf("template load failed: %w", err)
 	}
 
 	// Render templates
@@ -143,7 +157,7 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	if err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonRenderFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonRenderFailed, "Reconcile", "Template rendering failed: %v", err)
-		return nil // Don't requeue on render errors
+		return ctrl.Result{}, nil // Don't requeue on render errors
 	}
 
 	// Create or update output resource
@@ -161,7 +175,7 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	if err := r.createOrUpdateOutput(ctx, log, jt, outputName, renderedData); err != nil {
 		r.setCondition(jt, metav1.ConditionFalse, ReasonOutputFailed, err.Error())
 		r.Recorder.Eventf(jt, nil, corev1.EventTypeWarning, ReasonOutputFailed, "Reconcile", "Output creation/update failed: %v", err)
-		return fmt.Errorf("output creation/update failed: %w", err)
+		return ctrl.Result{}, fmt.Errorf("output creation/update failed: %w", err)
 	}
 
 	// Record current output in status for future cleanup
@@ -175,7 +189,7 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 	r.Recorder.Eventf(jt, nil, corev1.EventTypeNormal, ReasonRenderSuccess, "Reconcile", "Template rendered and output updated successfully")
 	log.Info("Successfully reconciled JinjaTemplate", "output", fmt.Sprintf("%s/%s", jt.Spec.Output.Kind, outputName))
 
-	return nil
+	return ctrl.Result{RequeueAfter: dnsRequeue}, nil
 }
 
 // validateSpec validates the JinjaTemplate spec.
@@ -216,11 +230,17 @@ func validateSources(sources []jtov1.Source) error {
 		if src.Name == "" {
 			return fmt.Errorf("source name must not be empty")
 		}
-		if src.ConfigMap == nil && src.Secret == nil {
-			return fmt.Errorf("source %q must specify either configMap or secret", src.Name)
+		refs := 0
+		for _, set := range []bool{src.ConfigMap != nil, src.Secret != nil, src.DNS != nil} {
+			if set {
+				refs++
+			}
 		}
-		if src.ConfigMap != nil && src.Secret != nil {
-			return fmt.Errorf("source %q must specify either configMap or secret, not both", src.Name)
+		if refs != 1 {
+			return fmt.Errorf("source %q must specify exactly one of configMap, secret or dns", src.Name)
+		}
+		if src.DNS != nil && src.DNS.Host == "" {
+			return fmt.Errorf("source %q: dns.host must not be empty", src.Name)
 		}
 	}
 	return nil
@@ -506,10 +526,15 @@ func (r *JinjaTemplateReconciler) createOrUpdateSecret(
 	return nil
 }
 
-// setCondition sets a condition on the JinjaTemplate status.
+// setCondition sets the Ready condition on the JinjaTemplate status.
 func (r *JinjaTemplateReconciler) setCondition(jt *jtov1.JinjaTemplate, status metav1.ConditionStatus, reason, message string) {
+	r.setConditionOfType(jt, ConditionReady, status, reason, message)
+}
+
+// setConditionOfType sets a condition of the given type on the JinjaTemplate status.
+func (r *JinjaTemplateReconciler) setConditionOfType(jt *jtov1.JinjaTemplate, condType string, status metav1.ConditionStatus, reason, message string) {
 	condition := metav1.Condition{
-		Type:               ConditionReady,
+		Type:               condType,
 		Status:             status,
 		ObservedGeneration: jt.Generation,
 		LastTransitionTime: metav1.Now(),
@@ -521,7 +546,7 @@ func (r *JinjaTemplateReconciler) setCondition(jt *jtov1.JinjaTemplate, status m
 	existingConditions := jt.Status.Conditions
 	found := false
 	for i, c := range existingConditions {
-		if c.Type == ConditionReady {
+		if c.Type == condType {
 			if c.Status != status || c.Reason != reason || c.Message != message {
 				existingConditions[i] = condition
 			}
@@ -533,6 +558,17 @@ func (r *JinjaTemplateReconciler) setCondition(jt *jtov1.JinjaTemplate, status m
 		existingConditions = append(existingConditions, condition)
 	}
 	jt.Status.Conditions = existingConditions
+}
+
+// removeCondition removes a condition of the given type if present.
+func removeCondition(jt *jtov1.JinjaTemplate, condType string) {
+	conditions := jt.Status.Conditions[:0]
+	for _, c := range jt.Status.Conditions {
+		if c.Type != condType {
+			conditions = append(conditions, c)
+		}
+	}
+	jt.Status.Conditions = conditions
 }
 
 // mergeLabels merges additional labels into existing labels without overwriting
