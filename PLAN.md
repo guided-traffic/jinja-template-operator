@@ -143,13 +143,13 @@ Allowlist-Autorisierung → SA-Impersonation. Konkret zu löschen:
 - Day-2-Discoverability: „wer darf was" ist jetzt RBAC-Join statt einer Datei —
   Punkt-Abfragen via `kubectl auth can-i --as=…`, Enumeration via rbac-lookup/who-can.
 
-## Reihenfolge
+## Todos
 
-1. API-Typen + CRD + sync-helm-crd
-2. Controller-Umbau (Factory, SA-Check, Reasons, Finalizer, lastOutput)
-3. main.go + config-Package aufräumen (Allowlist raus)
-4. Helm (ClusterRole, VAP-Template, Values, Deployment aufräumen)
-5. Example umstellen
-6. Tests (Unit + Integration) anpassen/ergänzen
-7. Doku (README, CLAUDE.md)
-8. Verifikation: `make test`, `make test-integration`, `make lint`, `make gosec`, `helm lint/template` (beide VAP-Zustände)
+- [ ] **API**: `Output.ServiceAccountName` + `OutputRef.ServiceAccountName`, CRD-YAML (CEL-Validierung, Pattern), `make sync-helm-crd`
+- [ ] **Controller**: Impersonation-Factory (`rawClientFor`), fail-closed SA-Check, neue Reasons (`ServiceAccountNotFound`, `OutputForbidden`, `FinalizeForbidden`), Finalizer + Cleanup via `lastOutput`-SA, Backoff-Requeue bei Forbidden
+- [ ] **Allowlist entfernen**: `internal/config/rawobject_allowlist.go` + Tests, `OperatorConfig.RawObjectAllowlist`, `--raw-object-allowlist-file`-Flag, Allowlist-Gate + `RawObjectDenied`
+- [ ] **Helm**: ClusterRole `get`+`impersonate` auf serviceaccounts, Allowlist-ConfigMap/Mount/Arg/Checksum raus, optionales VAP-Template (`operator.rawObjects.authorCheck.enabled`, default `false`), Values
+- [ ] **Example**: `gnp-applier`-SA + ClusterRole/Binding an Tenant-SA, `serviceAccountName` im CR, README-Walkthrough
+- [ ] **Tests**: Unit (Factory-Seam, Spec-Validierung, SA fehlt, Cleanup-Identität) + Integration (envtest: Erfolg, Forbidden→Grant→grün, Finalizer via SA, SA fehlt→anlegen→grün)
+- [ ] **Doku**: README (Example 5, Spec-Referenz, Values-Tabelle, Security-Abschnitt), CLAUDE.md RawObject-Abschnitt
+- [ ] **Verifikation**: `make test`, `make test-integration`, `make lint`, `make gosec`, `helm lint`/`template` (beide VAP-Zustände)
