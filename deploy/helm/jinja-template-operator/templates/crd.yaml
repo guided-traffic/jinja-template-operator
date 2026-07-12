@@ -220,20 +220,35 @@ spec:
                   type: object
                   required:
                     - kind
+                  x-kubernetes-validations:
+                    - rule: "has(self.serviceAccountName) == (self.kind == 'RawObject')"
+                      message: >-
+                        serviceAccountName is required for RawObject outputs and
+                        must not be set for ConfigMap/Secret outputs
                   properties:
                     kind:
                       description: >-
                         Kind is the kind of the output resource. With "RawObject"
                         the rendered template must be a complete Kubernetes manifest
                         (single YAML document including apiVersion, kind and
-                        metadata.name); name, key and keys must not be set. RawObject
-                        outputs are subject to the operator's namespace-bound kind
-                        allowlist.
+                        metadata.name); name, key and keys must not be set and
+                        serviceAccountName is required.
                       type: string
                       enum:
                         - ConfigMap
                         - Secret
                         - RawObject
+                    serviceAccountName:
+                      description: >-
+                        Name of the ServiceAccount in the CR's own namespace whose
+                        identity the operator impersonates when applying and deleting
+                        the RawObject output. Authorization is plain Kubernetes RBAC
+                        granted to that ServiceAccount (get/create/patch/delete on
+                        the target kind). Required for RawObject outputs; must not
+                        be set for ConfigMap/Secret outputs.
+                      type: string
+                      maxLength: 63
+                      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
                     name:
                       description: >-
                         Name of the output resource. Defaults to the CR name.
@@ -320,6 +335,12 @@ spec:
                         outputs; empty for cluster-scoped RawObject outputs and for
                         ConfigMap/Secret outputs (which always live in the CR's
                         namespace).
+                      type: string
+                    serviceAccountName:
+                      description: >-
+                        ServiceAccount identity (in the CR's namespace) that created
+                        this output. Cleanup after a target or ServiceAccount change
+                        runs under this identity. Set for RawObject outputs only.
                       type: string
                 dnsSources:
                   description: >-

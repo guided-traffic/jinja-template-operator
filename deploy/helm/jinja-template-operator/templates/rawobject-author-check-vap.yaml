@@ -1,0 +1,56 @@
+{{- if .Values.operator.rawObjects.authorCheck.enabled }}
+# Closes the confused-deputy gap of RawObject outputs: whoever creates or
+# updates a JinjaTemplate with a RawObject output must themselves be allowed
+# to impersonate the referenced ServiceAccount. Without this policy, the
+# right to create JinjaTemplates in a namespace implies the right to use any
+# ServiceAccount that exists there.
+#
+# Requires Kubernetes >= 1.30 (ValidatingAdmissionPolicy GA including the
+# CEL authorizer). Caveat: with GitOps controllers the "author" is the
+# controller's own identity, which then needs impersonate permission on the
+# referenced ServiceAccounts.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-rawobject-author-check
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups:
+          - jto.gtrfc.com
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - jinjatemplates
+  matchConditions:
+    - name: raw-object-outputs-only
+      expression: >-
+        has(object.spec) && has(object.spec.output) &&
+        object.spec.output.kind == 'RawObject'
+  validations:
+    - expression: >-
+        has(object.spec.output.serviceAccountName) &&
+        authorizer.group('').resource('serviceaccounts').namespace(object.metadata.namespace).name(object.spec.output.serviceAccountName).check('impersonate').allowed()
+      message: >-
+        the requesting user must be allowed to impersonate the ServiceAccount
+        named in spec.output.serviceAccountName (verb "impersonate" on
+        serviceaccounts in the CR's namespace)
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "jinja-template-operator.fullname" . }}-rawobject-author-check
+  labels:
+    {{- include "jinja-template-operator.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "jinja-template-operator.fullname" . }}-rawobject-author-check
+  validationActions:
+    - Deny
+{{- end }}

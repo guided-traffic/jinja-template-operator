@@ -54,15 +54,19 @@ Each source provides variables for the Jinja template context. Rules:
 - `spec.output.kind` (required): `ConfigMap`, `Secret` or `RawObject`.
 - `spec.output.name` (optional): name of the generated resource. Defaults to the CR's own name if omitted. Must not be set for `RawObject`.
 - `spec.output.key` (optional): the data key in the output ConfigMap or Secret where the rendered content is stored. Defaults to `"content"` if omitted. Must not be set for `RawObject`.
+- `spec.output.serviceAccountName` (required for `RawObject`, forbidden otherwise): ServiceAccount in the CR's own namespace whose identity the operator impersonates for apply/delete of the raw output.
 
 ### Raw Object Output (`spec.output.kind: RawObject`)
 
 - The rendered template must be a **single** YAML document forming a complete Kubernetes manifest (`apiVersion`, `kind`, `metadata.name`).
-- **Default deny:** the CR's namespace must be granted the rendered apiVersion/kind via the operator's namespace-bound allowlist (Helm value `operator.rawObjects.allowlist`, mounted as a config file, exact matching, no wildcards).
+- **ServiceAccount impersonation:** the operator applies and deletes the object as `system:serviceaccount:<cr-namespace>:<spec.output.serviceAccountName>`. Authorization is standard Kubernetes RBAC granted to that ServiceAccount (`get`/`create`/`patch` for apply, `delete` for cleanup/finalization); auditable via `kubectl auth can-i … --as=system:serviceaccount:<ns>:<sa>`. There is no operator-side allowlist.
+- **Fail-closed ServiceAccount check** before every apply/delete (uncached Get as the operator): a deleted ServiceAccount acts as a revocation. Missing SA ⇒ `Ready=False`/`ServiceAccountNotFound`; RBAC denial ⇒ `OutputForbidden` with remediation hint. Both return errors for backoff-requeue (SAs and RBAC are not watched).
+- `status.lastOutput.serviceAccountName` records the creator identity; cleanup after target/ServiceAccount changes and finalization run under that identity.
 - Namespaced kinds are written to the CR's own namespace only (cross-namespace targets are rejected) and use an OwnerReference for garbage collection.
-- Cluster-scoped kinds cannot carry a namespaced OwnerReference; the operator uses the finalizer `jto.gtrfc.com/raw-output-cleanup` on the CR and deletes the object itself on CR deletion (unless owner-reference semantics are disabled).
+- Cluster-scoped kinds cannot carry a namespaced OwnerReference; the operator uses the finalizer `jto.gtrfc.com/raw-output-cleanup` on the CR and deletes the object itself on CR deletion (unless owner-reference semantics are disabled). If the ServiceAccount/RBAC is gone, the CR stays Terminating (restore the SA, re-grant RBAC, or remove the finalizer manually).
 - Objects are applied via server-side apply (field manager `jinja-template-operator`). Raw outputs are not watched for external changes.
-- RBAC for the target kinds is **not** part of the Helm chart; it is granted explicitly (see `examples/calico-globalnetworkpolicy/`).
+- RBAC for the target kinds is **not** part of the Helm chart; it is granted explicitly to the tenant ServiceAccount (see `examples/calico-globalnetworkpolicy/`).
+- Optional admission guard (`operator.rawObjects.authorCheck.enabled`, default `false`, K8s ≥ 1.30): ValidatingAdmissionPolicy requiring the CR author to hold `impersonate` on the referenced ServiceAccount (confused-deputy mitigation).
 
 ### Owner Reference (`spec.setOwnerReference`)
 
@@ -155,7 +159,7 @@ Key Helm values:
 | Value | Description | Default |
 |-------|-------------|---------|
 | `operator.defaultOwnerReference` | Global default for OwnerReference on generated resources | `true` |
-| `operator.rawObjects.allowlist` | Namespace-bound allowlist for RawObject outputs (default deny) | `[]` |
+| `operator.rawObjects.authorCheck.enabled` | Optional VAP guard: CR authors need `impersonate` on the referenced ServiceAccount (K8s ≥ 1.30) | `false` |
 | `image.repository` | Container image repository | `guidedtraffic/jinja-template-operator` |
 | `image.tag` | Container image tag | `latest` |
 

@@ -7,11 +7,6 @@ type OperatorConfig struct {
 	// should have an OwnerReference pointing to the JinjaTemplate CR.
 	// Individual CRs can override this via spec.setOwnerReference.
 	DefaultOwnerReference bool
-
-	// RawObjectAllowlist binds allowed RawObject output kinds to namespaces.
-	// A JinjaTemplate may only render RawObject outputs if its namespace is
-	// granted the rendered kind here (default deny).
-	RawObjectAllowlist []RawObjectAllowlistEntry
 }
 
 // NewOperatorConfig creates an OperatorConfig with default values.

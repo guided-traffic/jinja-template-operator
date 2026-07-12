@@ -35,19 +35,16 @@ func init() {
 
 func main() {
 	var (
-		metricsAddr            string
-		healthProbeAddr        string
-		enableLeaderElection   bool
-		defaultOwnerRef        bool
-		rawObjectAllowlistFile string
+		metricsAddr          string
+		healthProbeAddr      string
+		enableLeaderElection bool
+		defaultOwnerRef      bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&healthProbeAddr, "health-probe-bind-address", ":8081", "The address the health probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
 	flag.BoolVar(&defaultOwnerRef, "default-owner-reference", true, "Default value for setOwnerReference when not specified in the CR.")
-	flag.StringVar(&rawObjectAllowlistFile, "raw-object-allowlist-file", "",
-		"Path to a YAML file binding allowed RawObject output kinds to namespaces. Empty means RawObject outputs are denied everywhere.")
 
 	opts := zap.Options{Development: false}
 	opts.BindFlags(flag.CommandLine)
@@ -73,24 +70,20 @@ func main() {
 	}
 
 	// Create operator config
-	rawObjectAllowlist, err := config.LoadRawObjectAllowlist(rawObjectAllowlistFile)
-	if err != nil {
-		setupLog.Error(err, "unable to load raw object allowlist")
-		os.Exit(1)
-	}
 	operatorConfig := &config.OperatorConfig{
 		DefaultOwnerReference: defaultOwnerRef,
-		RawObjectAllowlist:    rawObjectAllowlist,
 	}
 
 	// Set up the reconciler
 	reconciler := &controller.JinjaTemplateReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Config:   operatorConfig,
-		Recorder: mgr.GetEventRecorder("jinjatemplate-controller"),
-		Renderer: tmpl.NewRenderer(),
-		Resolver: sources.NewResolver(mgr.GetClient()),
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Config:     operatorConfig,
+		Recorder:   mgr.GetEventRecorder("jinjatemplate-controller"),
+		Renderer:   tmpl.NewRenderer(),
+		Resolver:   sources.NewResolver(mgr.GetClient()),
+		RestConfig: mgr.GetConfig(),
+		APIReader:  mgr.GetAPIReader(),
 	}
 
 	if err := reconciler.SetupWithManager(mgr); err != nil {

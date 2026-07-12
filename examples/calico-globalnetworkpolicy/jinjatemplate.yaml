@@ -37,3 +37,7 @@ spec:
 
   output:
     kind: RawObject
+    # The operator applies (and deletes) the policy as this ServiceAccount,
+    # which must exist in the CR's namespace and hold RBAC on the target kind
+    # (see rbac.yaml).
+    serviceAccountName: gnp-applier

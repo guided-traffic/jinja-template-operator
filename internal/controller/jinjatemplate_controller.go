@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,6 +80,21 @@ type JinjaTemplateReconciler struct {
 	Recorder events.EventRecorder
 	Renderer *tmpl.Renderer
 	Resolver *sources.Resolver
+
+	// RestConfig is the operator's REST config. Impersonated per-reconcile
+	// clients for RawObject outputs are derived from it.
+	RestConfig *rest.Config
+
+	// APIReader reads uncached, straight from the API server. Used for the
+	// fail-closed ServiceAccount existence check: a cached read would require
+	// cluster-wide list/watch on serviceaccounts and could serve stale data
+	// right after a ServiceAccount was deleted.
+	APIReader client.Reader
+
+	// RawClientFactory overrides how impersonated clients are built.
+	// Injectable for unit tests, where a fake client cannot simulate
+	// impersonation. Defaults to a RestConfig-based impersonating client.
+	RawClientFactory func(namespace, serviceAccountName string) (client.Client, error)
 
 	// DNSLookuper resolves DNS sources. Defaults to a miekg/dns based
 	// implementation when nil; injectable for tests.
@@ -211,6 +227,9 @@ func (r *JinjaTemplateReconciler) reconcile(ctx context.Context, log logr.Logger
 func (r *JinjaTemplateReconciler) validateSpec(jt *jtov1.JinjaTemplate) error {
 	switch jt.Spec.Output.Kind {
 	case OutputKindConfigMap, OutputKindSecret:
+		if jt.Spec.Output.ServiceAccountName != "" {
+			return fmt.Errorf("spec.output.serviceAccountName may only be set for RawObject outputs")
+		}
 	case OutputKindRawObject:
 		if err := validateRawObjectOutputSpec(jt.Spec.Output); err != nil {
 			return err

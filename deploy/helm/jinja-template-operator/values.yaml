@@ -7,20 +7,24 @@ operator:
   defaultOwnerReference: true
 
   # RawObject output configuration.
+  #
+  # RawObject outputs are authorized via ServiceAccount impersonation: the
+  # operator applies and deletes the rendered object as the ServiceAccount
+  # named in spec.output.serviceAccountName (same namespace as the CR).
+  # Grant that ServiceAccount RBAC on the target kind — see
+  # examples/calico-globalnetworkpolicy/.
   rawObjects:
-    # Namespace-bound allowlist for RawObject outputs (default deny):
-    # a JinjaTemplate may only render RawObject outputs if its namespace is
-    # listed here, and only for the listed kinds. Namespace names and kinds
-    # are matched exactly (no wildcards).
+    # Optional ValidatingAdmissionPolicy guard: requires the author of a
+    # JinjaTemplate with a RawObject output to hold "impersonate" permission
+    # on the referenced ServiceAccount. Closes the confused-deputy gap where
+    # "create jinjatemplates" in a namespace implies using any ServiceAccount
+    # that exists there.
     #
-    # Note: the operator's ClusterRole does NOT include permissions for the
-    # allowed kinds. Grant them separately — see examples/calico-globalnetworkpolicy/.
-    allowlist: []
-    #  - namespaces:
-    #      - infra
-    #    kinds:
-    #      - apiVersion: crd.projectcalico.org/v1
-    #        kind: GlobalNetworkPolicy
+    # Requires Kubernetes >= 1.30 (VAP GA incl. CEL authorizer). Default off:
+    # with GitOps controllers the author is the controller's identity, which
+    # would itself need impersonate permission on the ServiceAccounts.
+    authorCheck:
+      enabled: false
 
 # Number of replicas
 replicaCount: 1
