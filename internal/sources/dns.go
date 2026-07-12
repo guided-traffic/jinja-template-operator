@@ -127,25 +127,9 @@ func (l *MiekgLookuper) queryChain(ctx context.Context, server, host string, qty
 				dns.TypeToString[qtype], current, server, dns.RcodeToString[resp.Rcode])
 		}
 
-		var ips []string
-		cnames := make(map[string]string)
-		for _, rr := range resp.Answer {
-			ttl := time.Duration(rr.Header().Ttl) * time.Second
-			if ttl > 0 && (minTTL == 0 || ttl < minTTL) {
-				minTTL = ttl
-			}
-			switch record := rr.(type) {
-			case *dns.A:
-				if qtype == dns.TypeA {
-					ips = append(ips, record.A.String())
-				}
-			case *dns.AAAA:
-				if qtype == dns.TypeAAAA {
-					ips = append(ips, record.AAAA.String())
-				}
-			case *dns.CNAME:
-				cnames[record.Header().Name] = record.Target
-			}
+		ips, cnames, answerTTL := parseAnswers(resp.Answer, qtype)
+		if answerTTL > 0 && (minTTL == 0 || answerTTL < minTTL) {
+			minTTL = answerTTL
 		}
 
 		if len(ips) > 0 {
@@ -161,6 +145,31 @@ func (l *MiekgLookuper) queryChain(ctx context.Context, server, host string, qty
 	}
 
 	return nil, 0, fmt.Errorf("query %s %s: CNAME chain exceeds %d hops", dns.TypeToString[qtype], host, maxCNAMEHops)
+}
+
+// parseAnswers extracts the IPs matching the query type and all CNAME
+// mappings from an answer section, along with the minimum TTL over all records.
+func parseAnswers(answer []dns.RR, qtype uint16) (ips []string, cnames map[string]string, minTTL time.Duration) {
+	cnames = make(map[string]string)
+	for _, rr := range answer {
+		ttl := time.Duration(rr.Header().Ttl) * time.Second
+		if ttl > 0 && (minTTL == 0 || ttl < minTTL) {
+			minTTL = ttl
+		}
+		switch record := rr.(type) {
+		case *dns.A:
+			if qtype == dns.TypeA {
+				ips = append(ips, record.A.String())
+			}
+		case *dns.AAAA:
+			if qtype == dns.TypeAAAA {
+				ips = append(ips, record.AAAA.String())
+			}
+		case *dns.CNAME:
+			cnames[record.Header().Name] = record.Target
+		}
+	}
+	return ips, cnames, minTTL
 }
 
 // exchange sends a single DNS query, retrying over TCP on truncation.

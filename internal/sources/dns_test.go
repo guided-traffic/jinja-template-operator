@@ -38,7 +38,7 @@ func rr(t *testing.T, s string) dns.RR {
 }
 
 // staticHandler answers queries from a map of qname+qtype to answer records.
-func staticHandler(t *testing.T, answers map[string][]dns.RR, rcodes map[string]int) dns.HandlerFunc {
+func staticHandler(answers map[string][]dns.RR, rcodes map[string]int) dns.HandlerFunc {
 	return func(w dns.ResponseWriter, req *dns.Msg) {
 		resp := new(dns.Msg)
 		resp.SetReply(req)
@@ -54,7 +54,7 @@ func staticHandler(t *testing.T, answers map[string][]dns.RR, rcodes map[string]
 }
 
 func TestLookupA(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, map[string][]dns.RR{
+	addr := startTestDNSServer(t, staticHandler(map[string][]dns.RR{
 		"app.example.com.A": {
 			rr(t, "app.example.com. 120 IN A 10.0.0.2"),
 			rr(t, "app.example.com. 60 IN A 10.0.0.1"),
@@ -68,7 +68,7 @@ func TestLookupA(t *testing.T) {
 }
 
 func TestLookupDualStack(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, map[string][]dns.RR{
+	addr := startTestDNSServer(t, staticHandler(map[string][]dns.RR{
 		"app.example.com.A":    {rr(t, "app.example.com. 60 IN A 10.0.0.1")},
 		"app.example.com.AAAA": {rr(t, "app.example.com. 30 IN AAAA 2001:db8::1")},
 	}, nil))
@@ -80,7 +80,7 @@ func TestLookupDualStack(t *testing.T) {
 }
 
 func TestLookupFollowsCNAMEChain(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, map[string][]dns.RR{
+	addr := startTestDNSServer(t, staticHandler(map[string][]dns.RR{
 		"www.example.com.A":  {rr(t, "www.example.com. 300 IN CNAME lb.example.com.")},
 		"lb.example.com.A":   {rr(t, "lb.example.com. 300 IN CNAME node.example.com.")},
 		"node.example.com.A": {rr(t, "node.example.com. 60 IN A 10.0.0.9")},
@@ -93,7 +93,7 @@ func TestLookupFollowsCNAMEChain(t *testing.T) {
 }
 
 func TestLookupCNAMELoopFails(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, map[string][]dns.RR{
+	addr := startTestDNSServer(t, staticHandler(map[string][]dns.RR{
 		"a.example.com.A": {rr(t, "a.example.com. 300 IN CNAME b.example.com.")},
 		"b.example.com.A": {rr(t, "b.example.com. 300 IN CNAME a.example.com.")},
 	}, nil))
@@ -104,7 +104,7 @@ func TestLookupCNAMELoopFails(t *testing.T) {
 }
 
 func TestLookupNXDomainIsEmptySuccess(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, nil, map[string]int{
+	addr := startTestDNSServer(t, staticHandler(nil, map[string]int{
 		"gone.example.com.": dns.RcodeNameError,
 	}))
 
@@ -114,7 +114,7 @@ func TestLookupNXDomainIsEmptySuccess(t *testing.T) {
 }
 
 func TestLookupNoDataIsEmptySuccess(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, map[string][]dns.RR{}, nil))
+	addr := startTestDNSServer(t, staticHandler(map[string][]dns.RR{}, nil))
 
 	res, err := NewMiekgLookuper().Lookup(context.Background(), "app.example.com", RecordTypeAAAA, addr)
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestLookupNoDataIsEmptySuccess(t *testing.T) {
 }
 
 func TestLookupServFailIsError(t *testing.T) {
-	addr := startTestDNSServer(t, staticHandler(t, nil, map[string]int{
+	addr := startTestDNSServer(t, staticHandler(nil, map[string]int{
 		"broken.example.com.": dns.RcodeServerFailure,
 	}))
 
