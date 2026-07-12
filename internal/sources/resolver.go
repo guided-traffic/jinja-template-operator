@@ -24,12 +24,15 @@ func NewResolver(c client.Client) *Resolver {
 }
 
 // Resolve resolves all sources for a JinjaTemplate into a context map.
+// DNS sources are stateful (grace periods, stale-on-error) and therefore
+// resolved by the controller beforehand; their values are passed in via
+// dnsValues, keyed by source name.
 // The returned map can be passed directly to the template renderer.
-func (r *Resolver) Resolve(ctx context.Context, namespace string, sources []jtov1.Source) (map[string]interface{}, error) {
+func (r *Resolver) Resolve(ctx context.Context, namespace string, sources []jtov1.Source, dnsValues map[string][]string) (map[string]interface{}, error) {
 	result := make(map[string]interface{}, len(sources))
 
 	for _, src := range sources {
-		value, err := r.resolveSource(ctx, namespace, src)
+		value, err := r.resolveSource(ctx, namespace, src, dnsValues)
 		if err != nil {
 			return nil, fmt.Errorf("failed to resolve source %q: %w", src.Name, err)
 		}
@@ -40,14 +43,20 @@ func (r *Resolver) Resolve(ctx context.Context, namespace string, sources []jtov
 }
 
 // resolveSource resolves a single source to its value.
-func (r *Resolver) resolveSource(ctx context.Context, namespace string, src jtov1.Source) (interface{}, error) {
+func (r *Resolver) resolveSource(ctx context.Context, namespace string, src jtov1.Source, dnsValues map[string][]string) (interface{}, error) {
 	switch {
 	case src.ConfigMap != nil:
 		return r.resolveConfigMapSource(ctx, namespace, src.ConfigMap)
 	case src.Secret != nil:
 		return r.resolveSecretSource(ctx, namespace, src.Secret)
+	case src.DNS != nil:
+		values, ok := dnsValues[src.Name]
+		if !ok {
+			return nil, fmt.Errorf("no resolved DNS values for source %q", src.Name)
+		}
+		return values, nil
 	default:
-		return nil, fmt.Errorf("source %q must specify either configMap or secret", src.Name)
+		return nil, fmt.Errorf("source %q must specify configMap, secret or dns", src.Name)
 	}
 }
 

@@ -219,6 +219,11 @@ Notes:
 | `spec.sources[].secret.name` | `string` | No¹ | Name of a specific Secret |
 | `spec.sources[].secret.key` | `string` | No¹ | Key within the Secret |
 | `spec.sources[].secret.labelSelector` | `LabelSelector` | No¹ | Select multiple Secrets by labels (returns a list) |
+| `spec.sources[].dns.host` | `string` | No¹ | DNS name to resolve (returns a sorted list of IP strings) |
+| `spec.sources[].dns.recordType` | `string` | No | `A` (default), `AAAA` or `A+AAAA`. CNAME chains are followed (max 10 hops); the result contains only IPs |
+| `spec.sources[].dns.refreshIntervalSeconds` | `int` | No | Re-resolve after a fixed interval. If omitted, the record TTL drives the refresh |
+| `spec.sources[].dns.nameserver` | `string` | No | DNS server (`host` or `host:port`, port defaults to 53). Defaults to the system resolver |
+| `spec.sources[].dns.removalGracePeriodSeconds` | `int` | No | Keep a record in the list this long after it disappears from lookup responses (default: remove immediately) |
 | `spec.template` | `string` | No² | Inline Jinja template |
 | `spec.templateFrom.configMapRef.name` | `string` | No² | ConfigMap containing the template |
 | `spec.templateFrom.configMapRef.key` | `string` | No² | Key within the ConfigMap holding the template |
@@ -231,7 +236,7 @@ Notes:
 | `spec.output.keys[].templateFrom.configMapRef.name` | `string` | No⁴ | ConfigMap containing the template for this key |
 | `spec.output.keys[].templateFrom.configMapRef.key` | `string` | No⁴ | Key within the ConfigMap holding the template for this key |
 
-> ¹ Each source must specify either `configMap` or `secret` (not both). Within each, use either `name`+`key` (direct reference) or `labelSelector` (list).
+> ¹ Each source must specify exactly one of `configMap`, `secret` or `dns`. Within `configMap`/`secret`, use either `name`+`key` (direct reference) or `labelSelector` (list).
 >
 > ² Either `spec.template` (inline) or `spec.templateFrom` (external) must be provided — unless `spec.output.keys` is set, in which case both are ignored.
 >
@@ -258,6 +263,33 @@ Results are available as a list of objects, each containing `name` and `data`:
 {% endfor %}
 ```
 
+### DNS Source
+The lookup result is always a sorted list of IP address strings:
+```jinja
+{% for ip in my_dns_source %}
+  server {{ ip }};
+{% endfor %}
+```
+
+```yaml
+sources:
+  - name: backend_ips
+    dns:
+      host: backend.example.com
+      recordType: A            # A (default), AAAA or A+AAAA
+      refreshIntervalSeconds: 60   # omit to follow the record TTL
+      nameserver: 10.96.0.10       # omit to use the system resolver
+      removalGracePeriodSeconds: 300
+```
+
+DNS source semantics:
+
+- The result is always a **sorted list of IPs** — also for a single record. CNAME chains are resolved transparently (max 10 hops).
+- The operator re-reconciles based on the record **TTL**, or after `refreshIntervalSeconds` if set.
+- **`removalGracePeriodSeconds`**: an IP that disappears from lookup responses stays in the list for this period before being removed. New IPs appear immediately. NXDOMAIN counts as an empty (successful) response, so records age out through the grace period.
+- **Lookup failures** (timeout, SERVFAIL): the last known records stay valid indefinitely, `Ready` remains `True`, and the `DNSHealthy` condition turns `False` (plus a Warning Event). Failed lookups do not age records. Only if the *first ever* lookup fails does `Ready` turn `False`.
+- Resolved state is persisted in `status.dnsSources` and survives operator restarts.
+
 ## Status & Error Handling
 
 The operator reports status via **Conditions** and **Kubernetes Events**:
@@ -266,6 +298,8 @@ The operator reports status via **Conditions** and **Kubernetes Events**:
 |-----------|--------|---------|
 | `Ready` | `True` | Template rendered successfully, output resource is up-to-date |
 | `Ready` | `False` | Rendering failed (syntax error, missing source, etc.) |
+| `DNSHealthy` | `True` | All DNS source lookups succeed (only present when DNS sources are configured) |
+| `DNSHealthy` | `False` | At least one DNS lookup fails; the last known records are still in use |
 
 Errors are also emitted as Kubernetes Events, visible via:
 ```bash
