@@ -3,7 +3,7 @@ module github.com/guided-traffic/jinja-template-operator
 go 1.26.5
 
 require (
-	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/logr v1.4.4
 	github.com/guided-traffic/gonja v1.0.33
 	github.com/miekg/dns v1.1.72
 	github.com/stretchr/testify v1.11.1
