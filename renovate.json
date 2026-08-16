@@ -35,7 +35,7 @@
   ],
   "packageRules": [
     {
-      "description": "Go toolchain: group every Go version bump (go.mod directive, Containerfile golang image, workflow GO_VERSION, release badge) into one atomic PR so they never diverge",
+      "description": "Go toolchain: group every Go version bump (go.mod directive, Containerfile golang image, workflow GO_VERSION, release badge) into one atomic PR so they never diverge. timestamp-optional: Docker Hub tags carry no releaseTimestamp in this setup; with the v44 default (timestamp-required) the Containerfile update is marked pending forever and gets split out of the group, leaving the group PR unbuildable (go.mod ahead of builder image)",
       "matchPackageNames": [
         "golang"
       ],
@@ -45,7 +45,8 @@
       ],
       "groupName": "Go toolchain",
       "groupSlug": "go-toolchain",
-      "minimumReleaseAge": "1 day"
+      "minimumReleaseAge": "1 day",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
     },
     {
       "description": "Go toolchain: automerge minor and patch updates after CI passes",
@@ -262,7 +263,7 @@
       ],
       "depNameTemplate": "golang",
       "datasourceTemplate": "golang-version",
-      "versioningTemplate": "semver",
+      "versioningTemplate": "loose",
       "extractVersionTemplate": "^(?<version>\\d+\\.\\d+)"
     },
     {
