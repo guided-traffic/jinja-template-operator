@@ -6,7 +6,7 @@ require (
 	github.com/go-logr/logr v1.4.4
 	github.com/guided-traffic/gonja v1.0.39
 	github.com/miekg/dns v1.1.72
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	go.uber.org/zap v1.28.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
