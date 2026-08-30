@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/go-logr/logr v1.4.4
-	github.com/guided-traffic/gonja v1.0.39
+	github.com/guided-traffic/gonja v1.0.40
 	github.com/miekg/dns v1.1.73
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/zap v1.28.0
@@ -52,7 +52,7 @@ require (
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.19.2 // indirect
-	github.com/sirupsen/logrus v1.10.0 // indirect
+	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
