@@ -800,12 +800,32 @@ jobs:
           load: true
           tags: ${{ env.BASE_IMAGE }}
 
+      # Installed from the release download instead of aquasecurity/setup-trivy:
+      # the aquasecurity organization has an IP allow list that rejects
+      # Renovate's GitHub App token, so no aquasecurity/* action or GitHub
+      # release can be looked up. The version is tracked through the Go module
+      # proxy instead, which needs no GitHub API access.
       - name: Install Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          # renovate: datasource=github-releases depName=aquasecurity/trivy
-          version: v0.75.0
-          cache: true
+        env:
+          # renovate: datasource=go depName=github.com/aquasecurity/trivy
+          TRIVY_VERSION: v0.75.0
+        run: |
+          version="${TRIVY_VERSION#v}"
+          case "$(uname -m)" in
+            x86_64) arch=64bit ;;
+            aarch64 | arm64) arch=ARM64 ;;
+            *) echo "unsupported architecture $(uname -m)"; exit 1 ;;
+          esac
+          archive="trivy_${version}_Linux-${arch}.tar.gz"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${version}"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 -o "$archive" "$base/$archive"
+          curl -fsSL --retry 3 -o trivy_checksums.txt "$base/trivy_${version}_checksums.txt"
+          grep "  ${archive}\$" trivy_checksums.txt | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$archive" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+          trivy-bin/trivy --version
 
       - name: Download Trivy vulnerability DB
         run: |
