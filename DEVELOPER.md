@@ -29,6 +29,9 @@ deploy/helm/jinja-template-operator/
   templates/                    # deployment, SA, (aggregate) ClusterRoles, CRD, optional VAP
 examples/
   calico-globalnetworkpolicy/   # end-to-end RawObject example incl. RBAC
+hack/
+  govulncheck-diff.sh           # PR gate: called vulnerabilities new relative to the base revision
+  trivy-diff.sh                 # PR gate: image findings new relative to the base revision's image
 test/
   integration/                  # envtest suite, build tag `integration`
   e2e/                          # Kind + Helm suite, build tag `e2e`
@@ -163,11 +166,12 @@ Design notes behind the non-obvious parts:
 | `make e2e-local` | Kind create → image load → Helm install → E2E → cluster delete | The full local loop |
 | `make test` / `make test-coverage` | All tests + `cover.out` / HTML report | |
 | `make coverage-merge` / `coverage-json` | Merge unit+integration, write the shields.io badge JSON | |
-| `make gosec` / `make vuln` | gosec scan / govulncheck | |
+| `make gosec` / `make vuln` | gosec scan / govulncheck | `make vuln` fails on every called vulnerability |
+| `make vuln-diff BASE_REF=<ref>` | govulncheck at `HEAD` and `<ref>`, fail only on vulnerabilities `<ref>` does not have | The pull-request gate, see [CI and release](#ci-and-release). Each revision is scanned with the Go toolchain its `go.mod` declares |
 | `make docker-build` / `docker-push` / `docker-buildx` | Image via [Containerfile](Containerfile) | `IMG` defaults to `guidedtraffic/jinja-template-operator:latest` |
 | `make kind-create` / `kind-load` / `kind-delete` | Kind cluster `jinja-operator-test` | |
 
-Toolchain: Go per [go.mod](go.mod) (`1.26.5`, matching `GO_VERSION` in CI), envtest Kubernetes `1.29.0`, golangci-lint `v2.9.0`, kustomize `v5.3.0`, gocyclo `v0.6.0`. Tools install into `bin/` on demand.
+Toolchain: Go per [go.mod](go.mod) (kept equal to `GO_VERSION` in CI and the builder image in the [Containerfile](Containerfile) by one Renovate group), envtest Kubernetes per `ENVTEST_K8S_VERSION`. Tool versions live in the `## Tool Versions` block of the [Makefile](Makefile); golangci-lint, gosec and govulncheck carry a `# renovate:` annotation and are updated by Renovate, and install on demand into `bin/` under a versioned name (`bin/golangci-lint-<version>`), so a bumped version never reuses a stale binary or one found on `PATH`. golangci-lint and gosec are built against `golang.org/x/tools` and cannot read the export data of a newer Go toolchain than that library knows; a Go update can therefore fail lint/gosec until a tool release catches up.
 
 **Known gaps in the Makefile** (documented rather than implied to work):
 
@@ -196,9 +200,9 @@ make sync-helm-crd     # copies the CRD into the chart and injects the Helm labe
 | `linter` | `make lint` |
 | `unit-tests` / `integration-tests` | Coverage profiles uploaded as artifacts |
 | `e2e-tests` | Kind cluster in DinD, image built and imported via `ctr`, Helm install with [test/e2e/helm-values.yaml](test/e2e/helm-values.yaml), then `make test-e2e`. Contains explicit workarounds for DinD flakiness (inotify limits, kube-proxy iptables resync) |
-| `gosec` / `govulncheck` | Security scan / vulnerability check |
+| `gosec` / `govulncheck` | Security scan / vulnerability check. On pull requests the vulnerability check is `make vuln-diff` against the PR's base commit (fails only on called vulnerabilities the change introduces); on push to `main` it is the full `make vuln` |
 | `cyclomatic-complexity` | `make cyclo` + step summary |
-| `malware-scan` / `container-malware-scan` | ClamAV over the source tree; Trivy (`vuln,secret,misconfig`, CRITICAL/HIGH, fail on findings) over the built image |
+| `malware-scan` / `container-malware-scan` | ClamAV over the source tree; Trivy (`vuln,secret,misconfig`, CRITICAL/HIGH, fixed only) over the built image. On pull requests the base commit's image is built and scanned too and [hack/trivy-diff.sh](hack/trivy-diff.sh) fails only on findings the change introduces; on push to `main` every finding fails. The Trivy DB download retries and falls back from `mirror.gcr.io` to `ghcr.io` |
 | `coverage-report` | Merges profiles, writes `.github/badges/coverage.json`, comments the diff vs. `main` on PRs |
 | `semantic-release` | Only on push to `main`, after all other jobs pass |
 
@@ -209,7 +213,9 @@ Publishing a GitHub release triggers `.github/workflows/build.yml` ("Release Doc
 1. Multi-tag image build and push to Docker Hub with provenance, SBOM and Docker Scout scan.
 2. Chart `version`/`appVersion` and `image.tag` are rewritten from the release tag, the chart is packaged and pushed to the `gh-pages` branch, which serves the Helm repo at `https://guided-traffic.github.io/jinja-template-operator/`.
 
-Dependency updates come from Renovate ([renovate.json](renovate.json)); indirect Go module updates are deliberately not automated.
+Dependency updates come from Renovate ([renovate.json](renovate.json)), run by [.github/workflows/renovate.yml](.github/workflows/renovate.yml) once a day or on manual dispatch. Indirect Go module updates are deliberately not automated. Minor and patch updates automerge once all required checks pass (Go modules, Go toolchain, Docker images, Helm, GitHub Actions, the npm semantic-release toolchain, and the `# renovate:`-annotated tools), security updates regardless of type; major updates, except GitHub Actions, wait for review. `rebaseWhen: auto` rebases automerge PRs that fall behind `main`, so a PR that went red because of `main` (a missing tool update, a fix in another PR, a flaky download) is retested without manual action.
+
+Why the vulnerability gates compare against the base revision on pull requests: an advisory is published against code already on `main`, so it fails every open PR at once — including each Renovate PR that fixes only part of it (a Go toolchain release and a `golang.org/x/net` release for the same HTTP/2 advisory arrive as two PRs). A gate on the absolute state would block all of them until someone merges the fixes by hand. The comparison keeps the PR gate about the change; the absolute gate stays on `main`, where it blocks `semantic-release` until the fixes are merged.
 
 ## Conventions
 

@@ -44,12 +44,11 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: lint
-lint: ## Run linting.
+lint: golangci-lint ## Run linting.
 	@echo "Running static analysis..."
 	go vet ./...
 	$(GOFMT) -l .
-	@which golangci-lint > /dev/null || (echo "Installing golangci-lint..." && go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION))
-	golangci-lint run
+	$(GOLANGCI_LINT) run
 
 .PHONY: cyclo
 cyclo: ## Run cyclomatic complexity analysis.
@@ -182,14 +181,20 @@ coverage-json: ## Generate coverage badge JSON for shields.io.
 .PHONY: gosec
 gosec: ## Run gosec security scan.
 	@echo "Running gosec security scan..."
-	@which gosec > /dev/null || (echo "Installing gosec..." && go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0)
-	GOFLAGS="-buildvcs=false" gosec ./...
+	$(call go-install-versioned-tool,$(GOSEC),github.com/securego/gosec/v2/cmd/gosec,$(GOSEC_VERSION))
+	GOFLAGS="-buildvcs=false" $(GOSEC) ./...
 
 .PHONY: vuln
-vuln: ## Check for vulnerabilities.
+vuln: ## Check for vulnerabilities (fails on every called vulnerability).
 	@echo "Checking for vulnerabilities..."
-	@which govulncheck > /dev/null || (echo "Installing govulncheck..." && go install golang.org/x/vuln/cmd/govulncheck@latest)
-	GOFLAGS="-buildvcs=false" govulncheck ./...
+	$(call go-install-versioned-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
+	GOFLAGS="-buildvcs=false" $(GOVULNCHECK) ./...
+
+.PHONY: vuln-diff
+vuln-diff: ## Fail only on called vulnerabilities that BASE_REF does not have (pull-request gate).
+	@test -n "$(BASE_REF)" || { echo "BASE_REF is required, e.g. make vuln-diff BASE_REF=origin/main"; exit 1; }
+	$(call go-install-versioned-tool,$(GOVULNCHECK),golang.org/x/vuln/cmd/govulncheck,$(GOVULNCHECK_VERSION))
+	GOVULNCHECK="$(GOVULNCHECK)" hack/govulncheck-diff.sh "$(BASE_REF)"
 
 ##@ Code Generation
 
@@ -266,12 +271,28 @@ $(LOCALBIN):
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 ENVTEST ?= $(LOCALBIN)/setup-envtest
-GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint
+GOLANGCI_LINT ?= $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+GOSEC ?= $(LOCALBIN)/gosec-$(GOSEC_VERSION)
+GOVULNCHECK ?= $(LOCALBIN)/govulncheck-$(GOVULNCHECK_VERSION)
 
 ## Tool Versions
+# Versions annotated with "# renovate:" are updated by Renovate (see the
+# matching customManager in renovate.json); the line below the annotation must
+# stay the assignment. Static analysers built against an older
+# golang.org/x/tools cannot read the export data of a newer Go toolchain, so
+# these have to keep pace with the Go version.
 KUSTOMIZE_VERSION ?= v5.3.0
 ENVTEST_VERSION ?= release-0.19
-GOLANGCI_LINT_VERSION ?= v2.13.1
+# renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
+GOLANGCI_LINT_VERSION ?= v2.14.0
+# Pseudo-version of gosec main: v2.29.0 is built with golang.org/x/tools
+# v0.49.0 and fails on Go >= 1.27.2 export data ("export data version 5 is
+# greater than maximum supported version 4"). Renovate replaces it with the
+# next tagged release.
+# renovate: datasource=go depName=github.com/securego/gosec/v2
+GOSEC_VERSION ?= v2.29.1-0.20261009120814-7b1b5cebe007
+# renovate: datasource=go depName=golang.org/x/vuln
+GOVULNCHECK_VERSION ?= v1.8.0
 GOCYCLO_VERSION ?= v0.6.0
 
 # Cyclomatic complexity threshold (recommended: 10-15)
@@ -288,9 +309,8 @@ $(ENVTEST): $(LOCALBIN)
 	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
 
 .PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+golangci-lint: ## Download golangci-lint locally if necessary.
+	$(call go-install-versioned-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and target path
 define go-install-tool
@@ -299,5 +319,21 @@ set -e; \
 package=$(2)@$(3) ;\
 echo "Downloading $${package}" ;\
 GOBIN=$(LOCALBIN) go install $${package} ;\
+}
+endef
+
+# go-install-versioned-tool installs package $(2)@$(3) as the binary $(1),
+# whose name carries the version: a bumped *_VERSION installs the new release
+# instead of reusing a stale binary, and a tool that happens to be on PATH is
+# never picked up in its place.
+define go-install-versioned-tool
+@[ -x "$(1)" ] || { \
+set -e; \
+echo "Downloading $(2)@$(3)"; \
+tmpdir=$$(mktemp -d); \
+GOBIN="$$tmpdir" go install $(2)@$(3); \
+mkdir -p "$(dir $(1))"; \
+mv "$$tmpdir"/* "$(1)"; \
+rm -rf "$$tmpdir"; \
 }
 endef

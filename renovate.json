@@ -16,7 +16,7 @@
   "automergeStrategy": "squash",
   "ignoreTests": false,
   "prConcurrentLimit": 5,
-  "rebaseWhen": "conflicted",
+  "rebaseWhen": "auto",
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
   "osvVulnerabilityAlerts": true,
@@ -200,6 +200,17 @@
       ]
     },
     {
+      "description": "npm (semantic-release toolchain, CI only): automerge minor and patch updates after CI passes",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
       "description": "Group Kubernetes-related Go dependencies",
       "matchManagers": [
         "gomod"
@@ -236,6 +247,30 @@
         "conventional-changelog-conventionalcommits"
       ],
       "semanticCommitType": "chore"
+    },
+    {
+      "description": "CI tools pinned via '# renovate:' annotations (Makefile, workflows): 'chore' commits, they do not change the shipped binary",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "!golang"
+      ],
+      "semanticCommitType": "chore"
+    },
+    {
+      "description": "CI tools pinned via '# renovate:' annotations: automerge minor and patch updates after CI passes. The Go toolchain PR can depend on them (static analysers must read the new Go's export data); with rebaseWhen=auto it is retested once they are merged",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "!golang"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "automerge": true
     }
   ],
   "customManagers": [
@@ -278,6 +313,17 @@
       "depNameTemplate": "golang",
       "datasourceTemplate": "golang-version",
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Tool versions annotated with '# renovate: datasource=<datasource> depName=<depName>' directly above the assignment (Makefile variables, workflow inputs)",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Makefile$/",
+        "/^\\.github/workflows/.*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*[A-Za-z_][\\w-]*\\s*(?:\\?=|:=|=|:)\\s*['\"]?(?<currentValue>[^'\"\\s]+)['\"]?"
+      ]
     }
   ],
   "gomod": {
