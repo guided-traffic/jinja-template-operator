@@ -323,9 +323,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
       - name: Run linting
-        run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.1
-          make lint
+        run: make lint
 
   gosec:
     name: GoSec Security Scan
@@ -442,8 +440,19 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y build-essential
 
+      # Pull requests fail only on vulnerabilities they introduce: an advisory
+      # against code already on main would otherwise block every PR, including
+      # each Renovate PR that fixes part of it. Pushes to main keep the full
+      # check, which gates semantic-release.
       - name: Run vulnerability check
-        run: make vuln
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            make vuln-diff BASE_REF="$BASE_SHA"
+          else
+            make vuln
+          fi
 
   cyclomatic-complexity:
     name: Cyclomatic Complexity
@@ -740,9 +749,14 @@ jobs:
     name: Container Malware Scan
     runs-on: self-hosted
     needs: [malware-scan]  # Run after source scan passes
+    env:
+      IMAGE: jinja-template-operator:scan-${{ github.sha }}
+      BASE_IMAGE: jinja-template-operator:scan-base-${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # pull requests also build the base revision
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -763,27 +777,74 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
-          tags: jinja-template-operator:scan-${{ github.sha }}
+          tags: ${{ env.IMAGE }}
 
-      - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@master
+      - name: Check out base revision
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+
+      - name: Build base revision container for comparison
+        if: github.event_name == 'pull_request'
+        uses: docker/build-push-action@v7
         with:
-          image-ref: jinja-template-operator:scan-${{ github.sha }}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          scanners: 'vuln,secret,misconfig'
+          file: ${{ runner.temp }}/base/Containerfile
+          context: ${{ runner.temp }}/base
+          build-args: |
+            BUILD_NUMBER=scan-base-${{ github.event.pull_request.base.sha }}
+            GIT_COMMIT=${{ github.event.pull_request.base.sha }}
+            BUILD_TIME=${{ steps.time.outputs.epoch }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ env.BASE_IMAGE }}
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          # renovate: datasource=github-releases depName=aquasecurity/trivy
+          version: v0.75.0
+          cache: true
+
+      - name: Download Trivy vulnerability DB
+        run: |
+          # mirror.gcr.io intermittently answers the layer download with a plain
+          # 404, which Trivy does not treat as retryable, so it never falls back
+          # to ghcr.io on its own.
+          for repo in mirror.gcr.io/aquasec/trivy-db:2 ghcr.io/aquasecurity/trivy-db:2; do
+            for attempt in 1 2 3; do
+              trivy image --download-db-only --db-repository "$repo" && exit 0
+              echo "Downloading the Trivy DB from $repo failed (attempt $attempt)"
+              sleep $((attempt * 10))
+            done
+          done
+          exit 1
+
+      # Pull requests fail only on findings their image introduces compared
+      # with the base revision's image (see hack/trivy-diff.sh); pushes to main
+      # fail on every finding, which gates semantic-release.
+      - name: Run Trivy vulnerability scan
+        run: |
+          scan() {
+            trivy image --skip-db-update --format json --output "$2" \
+              --ignore-unfixed --severity CRITICAL,HIGH --pkg-types os,library \
+              --scanners vuln,secret,misconfig "$1"
+          }
+          scan "$IMAGE" trivy-head.json
+          trivy convert --format table trivy-head.json
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            scan "$BASE_IMAGE" trivy-base.json
+            hack/trivy-diff.sh trivy-head.json trivy-base.json
+          else
+            hack/trivy-diff.sh trivy-head.json
+          fi
 
       - name: Run Trivy scan (SARIF output)
         if: always()
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: jinja-template-operator:scan-${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          scanners: 'vuln,secret,misconfig'
+        run: |
+          trivy image --skip-db-update --format sarif --output trivy-results.sarif \
+            --scanners vuln,secret,misconfig "$IMAGE"
 
       - name: Upload Trivy scan results
         if: always()
@@ -793,9 +854,11 @@ jobs:
           path: trivy-results.sarif
           retention-days: 30
 
-      - name: Cleanup scan image
+      - name: Cleanup scan images
         if: always()
-        run: docker rmi jinja-template-operator:scan-${{ github.sha }} || true
+        run: |
+          docker rmi "$IMAGE" "$BASE_IMAGE" || true
+          git worktree remove --force "$RUNNER_TEMP/base" || true
 
   semantic-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
