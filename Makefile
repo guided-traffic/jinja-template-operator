@@ -284,7 +284,7 @@ GOVULNCHECK ?= $(LOCALBIN)/govulncheck-$(GOVULNCHECK_VERSION)
 KUSTOMIZE_VERSION ?= v5.3.0
 ENVTEST_VERSION ?= release-0.19
 # renovate: datasource=go depName=github.com/golangci/golangci-lint/v2
-GOLANGCI_LINT_VERSION ?= v2.14.0
+GOLANGCI_LINT_VERSION ?= v2.15.0
 # Pseudo-version of gosec main: v2.29.0 is built with golang.org/x/tools
 # v0.49.0 and fails on Go >= 1.27.2 export data ("export data version 5 is
 # greater than maximum supported version 4"). Renovate replaces it with the
