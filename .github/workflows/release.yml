@@ -808,7 +808,7 @@ jobs:
       - name: Install Trivy
         env:
           # renovate: datasource=go depName=github.com/aquasecurity/trivy
-          TRIVY_VERSION: v0.76.0
+          TRIVY_VERSION: v0.76.1
         run: |
           version="${TRIVY_VERSION#v}"
           case "$(uname -m)" in
