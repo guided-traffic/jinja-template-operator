@@ -290,7 +290,7 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 # greater than maximum supported version 4"). Renovate replaces it with the
 # next tagged release.
 # renovate: datasource=go depName=github.com/securego/gosec/v2
-GOSEC_VERSION ?= v2.29.1-0.20261009120814-7b1b5cebe007
+GOSEC_VERSION ?= v2.30.0
 # renovate: datasource=go depName=golang.org/x/vuln
 GOVULNCHECK_VERSION ?= v1.9.0
 GOCYCLO_VERSION ?= v0.6.0
