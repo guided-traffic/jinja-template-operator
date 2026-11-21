@@ -292,7 +292,7 @@ GOLANGCI_LINT_VERSION ?= v2.15.0
 # renovate: datasource=go depName=github.com/securego/gosec/v2
 GOSEC_VERSION ?= v2.30.0
 # renovate: datasource=go depName=golang.org/x/vuln
-GOVULNCHECK_VERSION ?= v1.9.0
+GOVULNCHECK_VERSION ?= v1.10.0
 GOCYCLO_VERSION ?= v0.6.0
 
 # Cyclomatic complexity threshold (recommended: 10-15)
